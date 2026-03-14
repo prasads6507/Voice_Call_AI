@@ -3,11 +3,25 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import '../app_theme.dart';
-
 import '../services/stt_service.dart';
 import '../services/llm_service.dart';
+import '../services/sip_service.dart';
 import '../services/storage_service.dart';
-import '../widgets/streaming_text.dart';
+
+/// A single chat message (question or answer)
+class ChatMessage {
+  final String text;
+  final bool isQuestion; // true = caller question, false = AI answer
+  final DateTime timestamp;
+  bool isStreaming; // true while Gemini is still generating
+
+  ChatMessage({
+    required this.text,
+    required this.isQuestion,
+    DateTime? timestamp,
+    this.isStreaming = false,
+  }) : timestamp = timestamp ?? DateTime.now();
+}
 
 class ActiveCallScreen extends StatefulWidget {
   const ActiveCallScreen({super.key});
@@ -16,34 +30,19 @@ class ActiveCallScreen extends StatefulWidget {
   State<ActiveCallScreen> createState() => _ActiveCallScreenState();
 }
 
-class _ActiveCallScreenState extends State<ActiveCallScreen> {
+class _ActiveCallScreenState extends State<ActiveCallScreen>
+    with TickerProviderStateMixin {
   late SttService _sttService;
   late LlmService _llmService;
-  final ScrollController _transcriptionScrollController = ScrollController();
-  final ScrollController _answerScrollController = ScrollController();
+  late SipService _sipService;
+  final ScrollController _scrollController = ScrollController();
 
   Timer? _durationTimer;
   Duration _callDuration = Duration.zero;
-  bool _isMuted = false;
-  bool _isSpeakerOn = true;
-  final String _callerNumber = '+1 (415) 234 5678';
   String _resumeText = '';
 
-  // Transcription state
-  final List<String> _transcriptionSegments = [];
-  String _currentTranscription = '';
-
-  // Demo mode (for testing without live audio)
-  final bool _demoMode = true;
-  int _demoStep = 0;
-  Timer? _demoTimer;
-  
-  final List<String> _demoQuestions = [
-    'Can you walk me through a time you had to debug a complex production issue under pressure?',
-    'What is your experience with microservices architecture?',
-    'How would you handle a situation where you disagree with your team lead on a technical decision?',
-  ];
-
+  // Chat messages
+  final List<ChatMessage> _messages = [];
   StreamSubscription<String>? _questionSubscription;
 
   @override
@@ -52,19 +51,15 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
     WakelockPlus.enable();
     _startCallTimer();
     _loadResume();
-    
-    // Initialize services after frame renders (to access Provider)
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _sttService = Provider.of<SttService>(context, listen: false);
       _llmService = Provider.of<LlmService>(context, listen: false);
-      
+      _sipService = Provider.of<SipService>(context, listen: false);
+
       _initializeAI();
       _llmService.addListener(_onLlmUpdate);
-      
-      // Start demo after a brief delay
-      Future.delayed(const Duration(seconds: 2), () {
-        if (mounted && _demoMode) _runDemo();
-      });
+      _sipService.addListener(_onSipUpdate);
     });
   }
 
@@ -72,17 +67,48 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
   void dispose() {
     WakelockPlus.disable();
     _durationTimer?.cancel();
-    _demoTimer?.cancel();
     _questionSubscription?.cancel();
     _llmService.removeListener(_onLlmUpdate);
-    _transcriptionScrollController.dispose();
-    _answerScrollController.dispose();
+    _sipService.removeListener(_onSipUpdate);
+    _scrollController.dispose();
     super.dispose();
   }
 
+  void _onSipUpdate() {
+    if (!mounted) return;
+    // If call ended externally
+    if (_sipService.callState == CallState.ended ||
+        _sipService.callState == CallState.idle) {
+      _endCall();
+    }
+  }
+
   void _onLlmUpdate() {
-    if (mounted) setState(() {});
-    _scrollToBottom(_answerScrollController);
+    if (!mounted) return;
+
+    // Find the last AI message (if any) and update it
+    final lastAiIdx = _messages.lastIndexWhere((m) => !m.isQuestion);
+    if (lastAiIdx >= 0 && _messages[lastAiIdx].isStreaming) {
+      setState(() {
+        _messages[lastAiIdx] = ChatMessage(
+          text: _llmService.currentAnswer,
+          isQuestion: false,
+          timestamp: _messages[lastAiIdx].timestamp,
+          isStreaming: _llmService.isGenerating,
+        );
+      });
+    } else if (_llmService.isGenerating && _llmService.currentAnswer.isNotEmpty) {
+      // New answer started
+      setState(() {
+        _messages.add(ChatMessage(
+          text: _llmService.currentAnswer,
+          isQuestion: false,
+          isStreaming: true,
+        ));
+      });
+    }
+
+    _scrollToBottom();
   }
 
   Future<void> _loadResume() async {
@@ -92,150 +118,134 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
   Future<void> _initializeAI() async {
     await _sttService.initialize();
     await _llmService.initialize();
-    
-    // Subscribe to question stream from STT
+
+    // Subscribe to detected questions from STT
     _questionSubscription = _sttService.questionStream?.listen((question) {
-      debugPrint('[ActiveCall] Question detected from STT: $question');
+      debugPrint('[ActiveCall] Question detected: $question');
+      setState(() {
+        _messages.add(ChatMessage(text: question, isQuestion: true));
+      });
+      _scrollToBottom();
+      // Send to Gemini
       _llmService.generateAnswer(question, _resumeText);
     });
-    
+
     _sttService.startListening();
+    if (mounted) setState(() {});
   }
 
   void _startCallTimer() {
     _durationTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      setState(() {
-        _callDuration += const Duration(seconds: 1);
-      });
+      if (mounted) {
+        setState(() => _callDuration += const Duration(seconds: 1));
+      }
     });
   }
 
   String get _formattedDuration {
-    final hours = _callDuration.inHours;
     final minutes = _callDuration.inMinutes.remainder(60);
     final seconds = _callDuration.inSeconds.remainder(60);
-    if (hours > 0) {
-      return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
-    }
     return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
   }
 
-  void _runDemo() {
-    if (_demoStep >= _demoQuestions.length) return;
-    
-    final question = _demoQuestions[_demoStep];
-    final words = question.split(' ');
-    int wordIndex = 0;
-
-    _demoTimer = Timer.periodic(const Duration(milliseconds: 150), (timer) {
-      if (!mounted) {
-        timer.cancel();
-        return;
-      }
-
-      if (wordIndex < words.length) {
-        setState(() {
-          _currentTranscription += '${wordIndex == 0 ? '' : ' '}${words[wordIndex]}';
-        });
-        _scrollToBottom(_transcriptionScrollController);
-        wordIndex++;
-      } else {
-        timer.cancel();
-        // Question complete — add to segments and generate answer
-        _transcriptionSegments.add(_currentTranscription);
-        _currentTranscription = '';
-        
-        // Generate AI answer via Gemini Live
-        _llmService.generateAnswer(question, _resumeText);
-        
-        // Schedule next demo question
-        _demoStep++;
-        if (_demoStep < _demoQuestions.length) {
-          Future.delayed(const Duration(seconds: 8), () {
-            if (mounted) _runDemo();
-          });
+  void _scrollToBottom() {
+    if (_scrollController.hasClients) {
+      Future.delayed(const Duration(milliseconds: 80), () {
+        if (_scrollController.hasClients) {
+          _scrollController.animateTo(
+            _scrollController.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 250),
+            curve: Curves.easeOut,
+          );
         }
-      }
-    });
-  }
-
-  void _scrollToBottom(ScrollController controller) {
-    if (controller.hasClients) {
-      Future.delayed(const Duration(milliseconds: 50), () {
-        controller.animateTo(
-          controller.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOut,
-        );
       });
     }
+  }
+
+  void _endCall() {
+    _durationTimer?.cancel();
+    _sttService.stopListening();
+    _llmService.clearSession();
+    if (mounted) Navigator.pop(context);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF080810),
+      backgroundColor: const Color(0xFF0B0B14),
       body: SafeArea(
         child: Column(
           children: [
-            // Call Header
-            _buildCallHeader(),
-            // Control Buttons
-            _buildControls(),
-            const Divider(height: 1, color: Color(0xFF1A1A2E)),
-            // Transcription Panel
-            Expanded(flex: 4, child: _buildTranscriptionPanel()),
-            const Divider(height: 1, color: Color(0xFF1A1A2E)),
-            // Answer Panel
-            Expanded(flex: 5, child: _buildAnswerPanel()),
+            // Header
+            _buildHeader(),
+            // Chat messages
+            Expanded(child: _buildChatList()),
+            // Bottom bar
+            _buildBottomBar(),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildCallHeader() {
+  Widget _buildHeader() {
     return Container(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
-      color: const Color(0xFF0A0A16),
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0D0D18),
+        border: Border(
+          bottom: BorderSide(color: Colors.white.withValues(alpha: 0.06)),
+        ),
+      ),
       child: Row(
         children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: AppTheme.accentGreen.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: const Icon(
-              Icons.phone_in_talk,
-              color: AppTheme.accentGreen,
-              size: 20,
-            ),
+          // Back button
+          GestureDetector(
+            onTap: _endCall,
+            child: const Icon(Icons.arrow_back_ios, size: 18, color: AppTheme.textSecondary),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 10),
+          // Caller avatar
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [AppTheme.accentGreen, AppTheme.accent],
+              ),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(Icons.phone_in_talk, color: Colors.white, size: 18),
+          ),
+          const SizedBox(width: 10),
+          // Caller info
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'Interview Call',
-                  style: TextStyle(
-                    fontSize: 16,
+                Text(
+                  _sipService.callerNumber.isNotEmpty
+                      ? _sipService.callerNumber
+                      : 'Interview Call',
+                  style: const TextStyle(
+                    fontSize: 15,
                     fontWeight: FontWeight.w600,
                     color: AppTheme.textPrimary,
                   ),
+                  overflow: TextOverflow.ellipsis,
                 ),
                 Text(
-                  _callerNumber,
+                  _formattedDuration,
                   style: TextStyle(
-                    fontSize: 13,
-                    color: AppTheme.textSecondary,
+                    fontSize: 12,
+                    color: AppTheme.textMuted,
+                    fontFamily: 'monospace',
                   ),
                 ),
               ],
             ),
           ),
-          // Gemini connection indicator
+          // Gemini status chip
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
@@ -247,14 +257,17 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(
-                  _llmService.isConnected ? Icons.cloud_done : Icons.cloud_off,
-                  size: 14,
-                  color: _llmService.isConnected ? AppTheme.accentGreen : AppTheme.accentRed,
+                Container(
+                  width: 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: _llmService.isConnected ? AppTheme.accentGreen : AppTheme.accentRed,
+                    shape: BoxShape.circle,
+                  ),
                 ),
-                const SizedBox(width: 4),
+                const SizedBox(width: 5),
                 Text(
-                  _llmService.isConnected ? 'AI' : 'Off',
+                  _llmService.isConnected ? 'Gemini' : 'Offline',
                   style: TextStyle(
                     fontSize: 11,
                     color: _llmService.isConnected ? AppTheme.accentGreen : AppTheme.accentRed,
@@ -264,310 +277,196 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
               ],
             ),
           ),
-          const SizedBox(width: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(
-              color: AppTheme.surfaceDarkElevated,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Text(
-              '⏱ $_formattedDuration',
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: AppTheme.textSecondary,
-                fontFamily: 'monospace',
-              ),
-            ),
-          ),
         ],
       ),
     );
   }
 
-  Widget _buildControls() {
+  Widget _buildChatList() {
+    if (_messages.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.forum_outlined, size: 48, color: AppTheme.textMuted.withValues(alpha: 0.3)),
+            const SizedBox(height: 12),
+            Text(
+              'Listening for conversation...',
+              style: TextStyle(fontSize: 15, color: AppTheme.textMuted),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Questions & AI answers will appear here',
+              style: TextStyle(fontSize: 13, color: AppTheme.textMuted.withValues(alpha: 0.6)),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return ListView.builder(
+      controller: _scrollController,
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+      itemCount: _messages.length,
+      itemBuilder: (context, index) {
+        final msg = _messages[index];
+        return _buildChatBubble(msg);
+      },
+    );
+  }
+
+  Widget _buildChatBubble(ChatMessage msg) {
+    final isQ = msg.isQuestion;
+
+    return Align(
+      alignment: isQ ? Alignment.centerLeft : Alignment.centerRight,
+      child: Container(
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width * 0.82,
+        ),
+        margin: EdgeInsets.only(
+          bottom: 10,
+          left: isQ ? 0 : 36,
+          right: isQ ? 36 : 0,
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: isQ
+              ? const Color(0xFF1A1A2E)
+              : AppTheme.primary.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.only(
+            topLeft: const Radius.circular(16),
+            topRight: const Radius.circular(16),
+            bottomLeft: isQ ? const Radius.circular(4) : const Radius.circular(16),
+            bottomRight: isQ ? const Radius.circular(16) : const Radius.circular(4),
+          ),
+          border: Border.all(
+            color: isQ
+                ? Colors.white.withValues(alpha: 0.06)
+                : AppTheme.primary.withValues(alpha: 0.15),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: isQ ? CrossAxisAlignment.start : CrossAxisAlignment.start,
+          children: [
+            // Label
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  isQ ? Icons.mic : Icons.auto_awesome,
+                  size: 12,
+                  color: isQ ? AppTheme.accent : AppTheme.primary,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  isQ ? 'Caller' : 'Gemini',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: isQ ? AppTheme.accent : AppTheme.primary,
+                  ),
+                ),
+                if (msg.isStreaming) ...[
+                  const SizedBox(width: 6),
+                  SizedBox(
+                    width: 10,
+                    height: 10,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 1.5,
+                      color: AppTheme.primary,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(height: 6),
+            // Message text
+            Text(
+              msg.text,
+              style: TextStyle(
+                fontSize: 15,
+                height: 1.45,
+                color: isQ ? AppTheme.textPrimary : AppTheme.textPrimary,
+              ),
+            ),
+            // Timestamp
+            const SizedBox(height: 4),
+            Text(
+              '${msg.timestamp.hour.toString().padLeft(2, '0')}:${msg.timestamp.minute.toString().padLeft(2, '0')}',
+              style: TextStyle(
+                fontSize: 10,
+                color: AppTheme.textMuted.withValues(alpha: 0.5),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBottomBar() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-      color: const Color(0xFF0A0A16),
+      padding: const EdgeInsets.fromLTRB(20, 10, 20, 14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0D0D18),
+        border: Border(
+          top: BorderSide(color: Colors.white.withValues(alpha: 0.06)),
+        ),
+      ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
-          _ControlButton(
-            icon: _isMuted ? Icons.mic_off : Icons.mic_none,
-            label: _isMuted ? 'Unmute' : 'Mute',
-            isActive: _isMuted,
-            activeColor: AppTheme.accentRed,
-            onTap: () => setState(() => _isMuted = !_isMuted),
+          _ControlBtn(
+            icon: _sipService.isMuted ? Icons.mic_off : Icons.mic_none,
+            label: _sipService.isMuted ? 'Unmute' : 'Mute',
+            isActive: _sipService.isMuted,
+            color: AppTheme.accentRed,
+            onTap: () async {
+              await _sipService.toggleMute();
+              setState(() {});
+            },
           ),
-          _ControlButton(
-            icon: _isSpeakerOn ? Icons.volume_up : Icons.volume_off,
+          _ControlBtn(
+            icon: _sipService.isSpeakerOn ? Icons.volume_up : Icons.volume_off,
             label: 'Speaker',
-            isActive: _isSpeakerOn,
-            activeColor: AppTheme.accent,
-            onTap: () => setState(() => _isSpeakerOn = !_isSpeakerOn),
+            isActive: _sipService.isSpeakerOn,
+            color: AppTheme.accent,
+            onTap: () async {
+              await _sipService.toggleSpeaker();
+              setState(() {});
+            },
           ),
-          _ControlButton(
+          _ControlBtn(
             icon: Icons.call_end,
             label: 'End',
             isActive: true,
-            activeColor: AppTheme.accentRed,
+            color: AppTheme.accentRed,
             isEndCall: true,
-            onTap: () {
-              _demoTimer?.cancel();
-              _sttService.stopListening();
-              _llmService.disconnect();
-              Navigator.pop(context);
+            onTap: () async {
+              await _sipService.endCall();
+              _endCall();
             },
           ),
         ],
       ),
     );
   }
-
-  Widget _buildTranscriptionPanel() {
-    return Container(
-      width: double.infinity,
-      color: const Color(0xFF0D0D18),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-            child: Row(
-              children: [
-                Icon(Icons.mic, size: 16, color: AppTheme.accent),
-                const SizedBox(width: 6),
-                Text(
-                  'INTERVIEWER',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: AppTheme.accent,
-                    letterSpacing: 1,
-                  ),
-                ),
-                const Spacer(),
-                // Live STT indicator
-                if (_sttService.isListening)
-                  Row(
-                    children: [
-                      Container(
-                        width: 6,
-                        height: 6,
-                        decoration: BoxDecoration(
-                          color: AppTheme.accentGreen,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        'Moonshine',
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: AppTheme.accentGreen,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ],
-                  ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: ListView(
-              controller: _transcriptionScrollController,
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-              children: [
-                // Previous segments (dimmer)
-                for (int i = 0; i < _transcriptionSegments.length; i++)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: Text(
-                      '"${_transcriptionSegments[i]}"',
-                      style: TextStyle(
-                        fontSize: 17,
-                        height: 1.5,
-                        color: i == _transcriptionSegments.length - 1
-                            ? AppTheme.textPrimary
-                            : AppTheme.textMuted,
-                        fontStyle: FontStyle.italic,
-                      ),
-                    ),
-                  ),
-                // Current live transcription
-                if (_currentTranscription.isNotEmpty)
-                  Text(
-                    '"$_currentTranscription"',
-                    style: const TextStyle(
-                      fontSize: 17,
-                      height: 1.5,
-                      color: AppTheme.textPrimary,
-                      fontStyle: FontStyle.italic,
-                    ),
-                  ),
-                if (_transcriptionSegments.isEmpty &&
-                    _currentTranscription.isEmpty)
-                  Text(
-                    'Listening for questions...',
-                    style: TextStyle(
-                      fontSize: 15,
-                      color: AppTheme.textMuted,
-                      fontStyle: FontStyle.italic,
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildAnswerPanel() {
-    return Container(
-      width: double.infinity,
-      color: const Color(0xFF0A0A14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-            child: Row(
-              children: [
-                Icon(Icons.smart_toy, size: 16, color: AppTheme.primary),
-                const SizedBox(width: 6),
-                Text(
-                  'GEMINI ANSWER',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: AppTheme.primary,
-                    letterSpacing: 1,
-                  ),
-                ),
-                const Spacer(),
-                if (_llmService.isGenerating)
-                  Row(
-                    children: [
-                      SizedBox(
-                        width: 12,
-                        height: 12,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 1.5,
-                          color: AppTheme.primary,
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        'streaming...',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: AppTheme.primary.withValues(alpha: 0.7),
-                        ),
-                      ),
-                    ],
-                  ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: ListView(
-              controller: _answerScrollController,
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-              children: [
-                // Answer history
-                for (final entry in _llmService.answerHistory.reversed)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Q: ${entry['question']}',
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: AppTheme.textMuted,
-                            fontStyle: FontStyle.italic,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          entry['answer'] ?? '',
-                          style: TextStyle(
-                            fontSize: 16,
-                            height: 1.5,
-                            color: AppTheme.textSecondary,
-                          ),
-                        ),
-                        Divider(
-                          height: 20,
-                          color: Colors.white.withValues(alpha: 0.05),
-                        ),
-                      ],
-                    ),
-                  ),
-                // Current answer (streaming)
-                if (_llmService.currentAnswer.isNotEmpty)
-                  StreamingText(
-                    text: _llmService.currentAnswer,
-                    isGenerating: _llmService.isGenerating,
-                  ),
-                if (_llmService.currentAnswer.isEmpty &&
-                    _llmService.answerHistory.isEmpty)
-                  Text(
-                    'Gemini answers will stream here as questions are detected...',
-                    style: TextStyle(
-                      fontSize: 15,
-                      color: AppTheme.textMuted,
-                      fontStyle: FontStyle.italic,
-                    ),
-                  ),
-              ],
-            ),
-          ),
-
-          // Regenerate button
-          if (_llmService.currentAnswer.isNotEmpty && !_llmService.isGenerating)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-              child: SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  onPressed: () {
-                    _llmService.regenerateAnswer(_resumeText);
-                  },
-                  icon: const Icon(Icons.refresh, size: 16),
-                  label: const Text('Regenerate Answer'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppTheme.primary,
-                    side: BorderSide(
-                      color: AppTheme.primary.withValues(alpha: 0.3),
-                    ),
-                    padding: const EdgeInsets.symmetric(vertical: 10),
-                  ),
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
 }
 
-class _ControlButton extends StatelessWidget {
+class _ControlBtn extends StatelessWidget {
   final IconData icon;
   final String label;
   final bool isActive;
-  final Color activeColor;
+  final Color color;
   final VoidCallback onTap;
   final bool isEndCall;
 
-  const _ControlButton({
+  const _ControlBtn({
     required this.icon,
     required this.label,
     required this.isActive,
-    required this.activeColor,
+    required this.color,
     required this.onTap,
     this.isEndCall = false,
   });
@@ -586,18 +485,18 @@ class _ControlButton extends StatelessWidget {
               color: isEndCall
                   ? AppTheme.accentRed
                   : isActive
-                      ? activeColor.withValues(alpha: 0.2)
+                      ? color.withValues(alpha: 0.2)
                       : AppTheme.surfaceDarkElevated,
               borderRadius: BorderRadius.circular(16),
               border: Border.all(
                 color: isActive
-                    ? activeColor.withValues(alpha: 0.4)
+                    ? color.withValues(alpha: 0.4)
                     : Colors.white.withValues(alpha: 0.08),
               ),
             ),
             child: Icon(
               icon,
-              color: isEndCall ? Colors.white : activeColor,
+              color: isEndCall ? Colors.white : color,
               size: 24,
             ),
           ),

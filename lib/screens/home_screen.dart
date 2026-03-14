@@ -35,10 +35,51 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _onSipUpdate() {
     setState(() {});
-    // Handle incoming call
+    // Handle incoming call — show answer dialog
     if (_sipService.callState == CallState.incoming) {
-      Navigator.pushNamed(context, AppRouter.activeCall);
+      _showIncomingCallDialog();
     }
+  }
+
+  void _showIncomingCallDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.surfaceDarkElevated,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text(
+          '📞 Incoming Call',
+          style: TextStyle(color: AppTheme.textPrimary, fontSize: 20),
+        ),
+        content: Text(
+          _sipService.callerNumber.isNotEmpty
+              ? _sipService.callerNumber
+              : 'Unknown Caller',
+          style: TextStyle(color: AppTheme.textSecondary, fontSize: 16),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              await _sipService.rejectCall();
+              if (ctx.mounted) Navigator.pop(ctx);
+            },
+            child: Text('Decline', style: TextStyle(color: AppTheme.accentRed, fontSize: 16)),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              await _sipService.answerCall();
+              if (ctx.mounted) Navigator.pop(ctx);
+              if (mounted) {
+                Navigator.pushNamed(context, AppRouter.activeCall);
+              }
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.accentGreen),
+            child: const Text('Answer', style: TextStyle(color: Colors.white, fontSize: 16)),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _loadData() async {

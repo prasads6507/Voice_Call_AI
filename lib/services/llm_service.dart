@@ -27,7 +27,7 @@ class LlmService extends ChangeNotifier {
   bool _sessionConfigured = false;
 
   // Gemini Live API config
-  static const String _model = 'gemini-live-2.5-flash-native-audio';
+  static const String _model = 'gemini-2.0-flash-live-001';
   static const String _wsBaseUrl =
       'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
 
@@ -284,6 +284,15 @@ class LlmService extends ChangeNotifier {
     _answerHistory.clear();
     _currentAnswer = '';
     _currentQuestion = '';
+    notifyListeners();
+  }
+
+  /// Clear session state for call end (keeps connection alive for next call)
+  void clearSession() {
+    _answerHistory.clear();
+    _currentAnswer = '';
+    _currentQuestion = '';
+    _state = _sessionConfigured ? LlmState.ready : LlmState.unloaded;
     notifyListeners();
   }
 

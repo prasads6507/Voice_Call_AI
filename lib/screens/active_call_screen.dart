@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import '../app_theme.dart';
 
@@ -16,8 +17,8 @@ class ActiveCallScreen extends StatefulWidget {
 }
 
 class _ActiveCallScreenState extends State<ActiveCallScreen> {
-  final SttService _sttService = SttService();
-  final LlmService _llmService = LlmService();
+  late SttService _sttService;
+  late LlmService _llmService;
   final ScrollController _transcriptionScrollController = ScrollController();
   final ScrollController _answerScrollController = ScrollController();
 
@@ -32,7 +33,7 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
   final List<String> _transcriptionSegments = [];
   String _currentTranscription = '';
 
-  // Demo mode
+  // Demo mode (for testing without live audio)
   final bool _demoMode = true;
   int _demoStep = 0;
   Timer? _demoTimer;
@@ -43,20 +44,28 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
     'How would you handle a situation where you disagree with your team lead on a technical decision?',
   ];
 
+  StreamSubscription<String>? _questionSubscription;
+
   @override
   void initState() {
     super.initState();
     WakelockPlus.enable();
     _startCallTimer();
     _loadResume();
-    _initializeAI();
     
-    // Start demo after a brief delay
-    Future.delayed(const Duration(seconds: 2), () {
-      if (mounted && _demoMode) _runDemo();
+    // Initialize services after frame renders (to access Provider)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _sttService = Provider.of<SttService>(context, listen: false);
+      _llmService = Provider.of<LlmService>(context, listen: false);
+      
+      _initializeAI();
+      _llmService.addListener(_onLlmUpdate);
+      
+      // Start demo after a brief delay
+      Future.delayed(const Duration(seconds: 2), () {
+        if (mounted && _demoMode) _runDemo();
+      });
     });
-
-    _llmService.addListener(_onLlmUpdate);
   }
 
   @override
@@ -64,6 +73,7 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
     WakelockPlus.disable();
     _durationTimer?.cancel();
     _demoTimer?.cancel();
+    _questionSubscription?.cancel();
     _llmService.removeListener(_onLlmUpdate);
     _transcriptionScrollController.dispose();
     _answerScrollController.dispose();
@@ -71,7 +81,7 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
   }
 
   void _onLlmUpdate() {
-    setState(() {});
+    if (mounted) setState(() {});
     _scrollToBottom(_answerScrollController);
   }
 
@@ -82,6 +92,14 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
   Future<void> _initializeAI() async {
     await _sttService.initialize();
     await _llmService.initialize();
+    
+    // Subscribe to question stream from STT
+    _questionSubscription = _sttService.questionStream?.listen((question) {
+      debugPrint('[ActiveCall] Question detected from STT: $question');
+      _llmService.generateAnswer(question, _resumeText);
+    });
+    
+    _sttService.startListening();
   }
 
   void _startCallTimer() {
@@ -127,7 +145,7 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
         _transcriptionSegments.add(_currentTranscription);
         _currentTranscription = '';
         
-        // Generate AI answer
+        // Generate AI answer via Gemini Live
         _llmService.generateAnswer(question, _resumeText);
         
         // Schedule next demo question
@@ -217,6 +235,36 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
               ],
             ),
           ),
+          // Gemini connection indicator
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: _llmService.isConnected
+                  ? AppTheme.accentGreen.withValues(alpha: 0.15)
+                  : AppTheme.accentRed.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  _llmService.isConnected ? Icons.cloud_done : Icons.cloud_off,
+                  size: 14,
+                  color: _llmService.isConnected ? AppTheme.accentGreen : AppTheme.accentRed,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  _llmService.isConnected ? 'AI' : 'Off',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: _llmService.isConnected ? AppTheme.accentGreen : AppTheme.accentRed,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             decoration: BoxDecoration(
@@ -267,6 +315,8 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
             isEndCall: true,
             onTap: () {
               _demoTimer?.cancel();
+              _sttService.stopListening();
+              _llmService.disconnect();
               Navigator.pop(context);
             },
           ),
@@ -297,6 +347,30 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
                     letterSpacing: 1,
                   ),
                 ),
+                const Spacer(),
+                // Live STT indicator
+                if (_sttService.isListening)
+                  Row(
+                    children: [
+                      Container(
+                        width: 6,
+                        height: 6,
+                        decoration: BoxDecoration(
+                          color: AppTheme.accentGreen,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Moonshine',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: AppTheme.accentGreen,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
               ],
             ),
           ),
@@ -364,7 +438,7 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
                 Icon(Icons.smart_toy, size: 16, color: AppTheme.primary),
                 const SizedBox(width: 6),
                 Text(
-                  'YOUR ANSWER',
+                  'GEMINI ANSWER',
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
@@ -386,7 +460,7 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
                       ),
                       const SizedBox(width: 6),
                       Text(
-                        'generating...',
+                        'streaming...',
                         style: TextStyle(
                           fontSize: 11,
                           color: AppTheme.primary.withValues(alpha: 0.7),
@@ -442,7 +516,7 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
                 if (_llmService.currentAnswer.isEmpty &&
                     _llmService.answerHistory.isEmpty)
                   Text(
-                    'AI answers will appear here as questions are detected...',
+                    'Gemini answers will stream here as questions are detected...',
                     style: TextStyle(
                       fontSize: 15,
                       color: AppTheme.textMuted,

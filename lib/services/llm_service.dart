@@ -1,13 +1,17 @@
 import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 import 'storage_service.dart';
 
 enum LlmState {
   unloaded,
-  loading,
+  connecting,
   ready,
   generating,
   error,
+  disconnected,
 }
 
 class LlmService extends ChangeNotifier {
@@ -15,8 +19,17 @@ class LlmService extends ChangeNotifier {
   String _currentAnswer = '';
   String _currentQuestion = '';
   final List<Map<String, String>> _answerHistory = [];
-  bool _cancelRequested = false;
   String _errorMessage = '';
+  String _apiKey = '';
+
+  WebSocketChannel? _channel;
+  StreamSubscription? _subscription;
+  bool _sessionConfigured = false;
+
+  // Gemini Live API config
+  static const String _model = 'gemini-live-2.5-flash-native-audio';
+  static const String _wsBaseUrl =
+      'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
 
   LlmState get state => _state;
   String get currentAnswer => _currentAnswer;
@@ -24,31 +37,25 @@ class LlmService extends ChangeNotifier {
   List<Map<String, String>> get answerHistory => List.unmodifiable(_answerHistory);
   String get errorMessage => _errorMessage;
   bool get isGenerating => _state == LlmState.generating;
+  bool get isConnected => _state == LlmState.ready || _state == LlmState.generating;
 
-  /// Initialize: load Gemma-3-1B 4-bit GGUF model
+  /// Initialize: load API key and connect WebSocket
   Future<bool> initialize() async {
-    if (_state == LlmState.ready) return true;
+    if (_state == LlmState.ready || _state == LlmState.generating) return true;
 
-    _state = LlmState.loading;
+    _state = LlmState.connecting;
     notifyListeners();
 
     try {
-      final modelPath = await StorageService.gemmaModelPath;
-      final exists = await StorageService.gemmaModelExists();
-      
-      if (!exists) {
-        debugPrint('[LlmService] Gemma model not found at $modelPath');
+      _apiKey = await StorageService.getGeminiApiKey();
+      if (_apiKey.isEmpty) {
         _state = LlmState.error;
-        _errorMessage = 'Model file not found';
+        _errorMessage = 'Gemini API key not configured';
         notifyListeners();
         return false;
       }
 
-      // Load the GGUF model using flutter_llama
-      // In production: LlamaModel.load(modelPath, nCtx: 2048, nGpuLayers: 32)
-      _state = LlmState.ready;
-      debugPrint('[LlmService] Gemma model loaded from $modelPath');
-      notifyListeners();
+      await _connectWebSocket();
       return true;
     } catch (e) {
       debugPrint('[LlmService] Init error: $e');
@@ -59,59 +66,181 @@ class LlmService extends ChangeNotifier {
     }
   }
 
+  /// Connect to Gemini Live API WebSocket
+  Future<void> _connectWebSocket() async {
+    final uri = Uri.parse('$_wsBaseUrl?key=$_apiKey');
+    
+    _channel = WebSocketChannel.connect(uri);
+    await _channel!.ready;
+    
+    debugPrint('[LlmService] WebSocket connected to Gemini Live API');
+
+    // Send session setup message
+    _sendSetupMessage();
+
+    // Listen for responses
+    _subscription = _channel!.stream.listen(
+      _onMessage,
+      onError: _onError,
+      onDone: _onDone,
+    );
+  }
+
+  /// Send initial session configuration
+  void _sendSetupMessage() {
+    final setupMsg = {
+      'setup': {
+        'model': 'models/$_model',
+        'generationConfig': {
+          'responseModalities': ['TEXT'],
+          'temperature': 0.7,
+          'maxOutputTokens': 512,
+        },
+        'systemInstruction': {
+          'parts': [
+            {
+              'text': 'You are a confident, articulate interview coach helping someone '
+                  'answer interview questions naturally. You are silently listening to '
+                  'an ongoing phone interview. When a question is detected, provide a '
+                  'concise 2-3 sentence answer using the candidate\'s resume context. '
+                  'Sound human, specific, and confident. Respond ONLY with the answer text, '
+                  'no preamble or labels.'
+            }
+          ]
+        },
+      }
+    };
+
+    _channel?.sink.add(jsonEncode(setupMsg));
+    debugPrint('[LlmService] Sent session setup message');
+  }
+
+  /// Handle incoming WebSocket messages
+  void _onMessage(dynamic message) {
+    try {
+      final data = jsonDecode(message as String) as Map<String, dynamic>;
+
+      // Handle setup complete
+      if (data.containsKey('setupComplete')) {
+        _sessionConfigured = true;
+        _state = LlmState.ready;
+        debugPrint('[LlmService] Gemini Live session configured');
+        notifyListeners();
+        return;
+      }
+
+      // Handle server content (streamed answer)
+      if (data.containsKey('serverContent')) {
+        final serverContent = data['serverContent'] as Map<String, dynamic>;
+        final modelTurn = serverContent['modelTurn'] as Map<String, dynamic>?;
+        
+        if (modelTurn != null) {
+          final parts = modelTurn['parts'] as List<dynamic>?;
+          if (parts != null) {
+            for (final part in parts) {
+              final textPart = (part as Map<String, dynamic>)['text'] as String?;
+              if (textPart != null) {
+                _currentAnswer += textPart;
+                notifyListeners();
+              }
+            }
+          }
+        }
+
+        // Check if turn is complete
+        final turnComplete = serverContent['turnComplete'] as bool? ?? false;
+        if (turnComplete && _currentAnswer.isNotEmpty) {
+          // Save to history
+          _answerHistory.insert(0, {
+            'question': _currentQuestion,
+            'answer': _currentAnswer,
+          });
+          _state = LlmState.ready;
+          notifyListeners();
+        }
+      }
+    } catch (e) {
+      debugPrint('[LlmService] Message parse error: $e');
+    }
+  }
+
+  void _onError(dynamic error) {
+    debugPrint('[LlmService] WebSocket error: $error');
+    _state = LlmState.error;
+    _errorMessage = error.toString();
+    notifyListeners();
+  }
+
+  void _onDone() {
+    debugPrint('[LlmService] WebSocket closed');
+    _state = LlmState.disconnected;
+    _sessionConfigured = false;
+    notifyListeners();
+  }
+
   /// Generate answer for a detected interview question
   Future<void> generateAnswer(String question, String resumeText) async {
-    if (_state != LlmState.ready && _state != LlmState.generating) return;
-
-    // Cancel any in-progress generation
-    if (_state == LlmState.generating) {
-      _cancelRequested = true;
-      await Future.delayed(const Duration(milliseconds: 100));
+    if (!_sessionConfigured || _channel == null) {
+      debugPrint('[LlmService] Cannot generate: session not configured');
+      // Try to reconnect
+      await initialize();
+      if (!_sessionConfigured) return;
     }
 
-    _cancelRequested = false;
     _state = LlmState.generating;
     _currentQuestion = question;
     _currentAnswer = '';
     notifyListeners();
 
-    try {
-      // Step 1: Context search — find most relevant resume paragraphs
-      final relevantContext = _searchContext(question, resumeText);
+    // Build the prompt with resume context
+    final relevantContext = _searchContext(question, resumeText);
+    final prompt = 'Resume Context:\n$relevantContext\n\n'
+        'Interview Question: $question\n\n'
+        'Provide a concise, confident 2-3 sentence answer:';
 
-      // Step 2: Build prompt
-      final prompt = _buildPrompt(question, relevantContext);
-
-      // Step 3: Simulate streaming generation
-      // In production, this would call flutter_llama's generate method
-      // with streaming callback for token-by-token output
-      await _simulateStreaming(prompt);
-
-      if (!_cancelRequested) {
-        // Save to history
-        _answerHistory.insert(0, {
-          'question': question,
-          'answer': _currentAnswer,
-        });
-
-        _state = LlmState.ready;
-        notifyListeners();
+    // Send as client content
+    final msg = {
+      'clientContent': {
+        'turns': [
+          {
+            'role': 'user',
+            'parts': [
+              {'text': prompt}
+            ]
+          }
+        ],
+        'turnComplete': true,
       }
-    } catch (e) {
-      debugPrint('[LlmService] Generation error: $e');
-      _state = LlmState.ready;
-      _currentAnswer = 'Error generating answer. Please try again.';
-      notifyListeners();
-    }
+    };
+
+    _channel?.sink.add(jsonEncode(msg));
+    debugPrint('[LlmService] Sent question to Gemini: $question');
   }
 
-  /// Search resume for most relevant paragraphs using word overlap
+  /// Send raw audio to Gemini as a silent listener (base64 PCM)
+  void sendAudioChunk(List<int> pcmBytes) {
+    if (!_sessionConfigured || _channel == null) return;
+
+    final msg = {
+      'realtimeInput': {
+        'mediaChunks': [
+          {
+            'mimeType': 'audio/pcm;rate=16000',
+            'data': base64Encode(pcmBytes),
+          }
+        ]
+      }
+    };
+
+    _channel?.sink.add(jsonEncode(msg));
+  }
+
+  /// Search resume for most relevant paragraphs
   String _searchContext(String question, String resumeText) {
     if (resumeText.trim().isEmpty) {
       return 'No resume context provided.';
     }
 
-    // Split resume into paragraphs
     final paragraphs = resumeText
         .split(RegExp(r'\n\s*\n'))
         .where((p) => p.trim().length > 20)
@@ -119,7 +248,6 @@ class LlmService extends ChangeNotifier {
 
     if (paragraphs.isEmpty) return resumeText;
 
-    // Score each paragraph against the question
     final questionWords = question.toLowerCase().split(RegExp(r'\W+'));
     
     final scored = paragraphs.map((p) {
@@ -133,45 +261,10 @@ class LlmService extends ChangeNotifier {
       return MapEntry(p, overlap);
     }).toList();
 
-    // Sort by score and take top 2
     scored.sort((a, b) => b.value.compareTo(a.value));
     final topParagraphs = scored.take(2).map((e) => e.key).toList();
 
     return topParagraphs.join('\n\n');
-  }
-
-  /// Build the LLM prompt
-  String _buildPrompt(String question, String context) {
-    return '''You are a confident, articulate interview coach helping someone answer interview questions naturally. Using ONLY the context below, write a 2-3 sentence answer. Sound human, specific, and confident. Do not add information not in the context.
-
-Context:
-$context
-
-Interview Question: $question
-
-Answer:''';
-  }
-
-  /// Simulate streaming output for demo purposes
-  /// In production, this calls the actual LLM inference
-  Future<void> _simulateStreaming(String prompt) async {
-    // Demo response based on the question
-    const demoResponse = 
-        "At my previous role, I tackled a similar challenge by breaking it down "
-        "into manageable components and leveraging my experience with the relevant "
-        "technologies. I collaborated closely with my team to deliver a solution "
-        "that exceeded expectations, resulting in measurable improvements in "
-        "performance and user satisfaction. This experience reinforced my ability "
-        "to work effectively under pressure while maintaining high code quality.";
-
-    final words = demoResponse.split(' ');
-    for (final word in words) {
-      if (_cancelRequested) return;
-      
-      _currentAnswer += '${_currentAnswer.isEmpty ? '' : ' '}$word';
-      notifyListeners();
-      await Future.delayed(const Duration(milliseconds: 60));
-    }
   }
 
   /// Regenerate the last answer
@@ -182,7 +275,6 @@ Answer:''';
 
   /// Cancel current generation
   void cancelGeneration() {
-    _cancelRequested = true;
     _state = LlmState.ready;
     notifyListeners();
   }
@@ -195,9 +287,25 @@ Answer:''';
     notifyListeners();
   }
 
+  /// Disconnect WebSocket
+  void disconnect() {
+    _subscription?.cancel();
+    _channel?.sink.close();
+    _channel = null;
+    _sessionConfigured = false;
+    _state = LlmState.disconnected;
+    notifyListeners();
+  }
+
+  /// Reconnect if disconnected
+  Future<void> reconnect() async {
+    disconnect();
+    await initialize();
+  }
+
   @override
   void dispose() {
-    _cancelRequested = true;
+    disconnect();
     super.dispose();
   }
 }

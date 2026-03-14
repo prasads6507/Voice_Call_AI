@@ -18,8 +18,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final SipService _sipService = SipService();
   String _gvNumber = '';
-  bool _whisperReady = false;
-  bool _gemmaReady = false;
+  bool _hasApiKey = false;
 
   @override
   void initState() {
@@ -44,8 +43,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _loadData() async {
     _gvNumber = await StorageService.getGvNumber();
-    _whisperReady = await StorageService.isWhisperReady();
-    _gemmaReady = await StorageService.isGemmaReady();
+    _hasApiKey = await StorageService.hasGeminiApiKey();
     setState(() {});
 
     // Auto-register SIP
@@ -121,20 +119,16 @@ class _HomeScreenState extends State<HomeScreen> {
                     Row(
                       children: [
                         Icon(
-                          _whisperReady ? Icons.check_circle : Icons.circle_outlined,
-                          color: _whisperReady
-                              ? AppTheme.accentGreen
-                              : AppTheme.textMuted,
+                          Icons.check_circle,
+                          color: AppTheme.accentGreen,
                           size: 18,
                         ),
                         const SizedBox(width: 8),
                         Text(
-                          'Whisper ${_whisperReady ? "ready" : "not downloaded"}',
+                          'Moonshine STT (on-device)',
                           style: TextStyle(
                             fontSize: 14,
-                            color: _whisperReady
-                                ? AppTheme.accentGreen
-                                : AppTheme.textMuted,
+                            color: AppTheme.accentGreen,
                           ),
                         ),
                       ],
@@ -143,34 +137,34 @@ class _HomeScreenState extends State<HomeScreen> {
                     Row(
                       children: [
                         Icon(
-                          _gemmaReady ? Icons.check_circle : Icons.circle_outlined,
-                          color: _gemmaReady
+                          _hasApiKey ? Icons.check_circle : Icons.circle_outlined,
+                          color: _hasApiKey
                               ? AppTheme.accentGreen
                               : AppTheme.textMuted,
                           size: 18,
                         ),
                         const SizedBox(width: 8),
                         Text(
-                          'Gemma-3 ${_gemmaReady ? "ready" : "not downloaded"}',
+                          'Gemini Live ${_hasApiKey ? "connected" : "API key needed"}',
                           style: TextStyle(
                             fontSize: 14,
-                            color: _gemmaReady
+                            color: _hasApiKey
                                 ? AppTheme.accentGreen
                                 : AppTheme.textMuted,
                           ),
                         ),
                       ],
                     ),
-                    if (!_whisperReady || !_gemmaReady) ...[
+                    if (!_hasApiKey) ...[
                       const SizedBox(height: 12),
                       SizedBox(
                         width: double.infinity,
                         child: OutlinedButton.icon(
                           onPressed: () {
-                            Navigator.pushNamed(context, AppRouter.modelDownload);
+                            Navigator.pushNamed(context, AppRouter.apiKey);
                           },
-                          icon: const Icon(Icons.download, size: 16),
-                          label: const Text('Download Models'),
+                          icon: const Icon(Icons.key, size: 16),
+                          label: const Text('Add API Key'),
                           style: OutlinedButton.styleFrom(
                             foregroundColor: AppTheme.primary,
                             side: BorderSide(

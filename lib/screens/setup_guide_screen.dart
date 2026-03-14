@@ -137,7 +137,7 @@ class SetupGuideScreen extends StatelessWidget {
                   _FlowArrow(),
                   _FlowItem('StealthAnswer receives the call', Icons.headset_mic, AppTheme.accentGreen),
                   _FlowArrow(),
-                  _FlowItem('Whisper transcribes the interview question', Icons.mic, AppTheme.accentOrange),
+                  _FlowItem('Moonshine transcribes the interview question', Icons.mic, AppTheme.accentOrange),
                   _FlowArrow(),
                   _FlowItem('AI generates your answer on screen', Icons.smart_toy, const Color(0xFFE040FB)),
                 ],

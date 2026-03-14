@@ -1,8 +1,5 @@
-
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:path_provider/path_provider.dart';
-import 'dart:io';
 
 class StorageService {
   static const _secureStorage = FlutterSecureStorage();
@@ -14,8 +11,7 @@ class StorageService {
   static const String _gvNumber = 'gv_number';
   static const String _resumeText = 'resume_text';
   static const String _onboardingComplete = 'onboarding_complete';
-  static const String _whisperModelReady = 'whisper_model_ready';
-  static const String _gemmaModelReady = 'gemma_model_ready';
+  static const String _geminiApiKey = 'gemini_api_key';
 
   // SIP Credentials (secure)
   static Future<void> saveSipCredentials({
@@ -39,6 +35,20 @@ class StorageService {
   static Future<bool> hasSipCredentials() async {
     final username = await _secureStorage.read(key: _sipUsername);
     return username != null && username.isNotEmpty;
+  }
+
+  // Gemini API Key (secure)
+  static Future<void> saveGeminiApiKey(String key) async {
+    await _secureStorage.write(key: _geminiApiKey, value: key);
+  }
+
+  static Future<String> getGeminiApiKey() async {
+    return await _secureStorage.read(key: _geminiApiKey) ?? '';
+  }
+
+  static Future<bool> hasGeminiApiKey() async {
+    final key = await _secureStorage.read(key: _geminiApiKey);
+    return key != null && key.isNotEmpty;
   }
 
   // Google Voice Number
@@ -72,62 +82,6 @@ class StorageService {
   static Future<bool> isOnboardingComplete() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool(_onboardingComplete) ?? false;
-  }
-
-  // Model Status
-  static Future<void> setModelReady(String modelKey, bool ready) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(modelKey, ready);
-  }
-
-  static Future<bool> isWhisperReady() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool(_whisperModelReady) ?? false;
-  }
-
-  static Future<bool> isGemmaReady() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool(_gemmaModelReady) ?? false;
-  }
-
-  static Future<void> setWhisperReady(bool ready) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_whisperModelReady, ready);
-  }
-
-  static Future<void> setGemmaReady(bool ready) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_gemmaModelReady, ready);
-  }
-
-  // Model file paths
-  static Future<String> get modelsDirectory async {
-    final appDir = await getApplicationDocumentsDirectory();
-    final modelsDir = Directory('${appDir.path}/models');
-    if (!await modelsDir.exists()) {
-      await modelsDir.create(recursive: true);
-    }
-    return modelsDir.path;
-  }
-
-  static Future<String> get whisperModelPath async {
-    final dir = await modelsDirectory;
-    return '$dir/ggml-tiny.bin';
-  }
-
-  static Future<String> get gemmaModelPath async {
-    final dir = await modelsDirectory;
-    return '$dir/gemma-3-1b-it-q4_k_m.gguf';
-  }
-
-  static Future<bool> whisperModelExists() async {
-    final path = await whisperModelPath;
-    return File(path).existsSync();
-  }
-
-  static Future<bool> gemmaModelExists() async {
-    final path = await gemmaModelPath;
-    return File(path).existsSync();
   }
 
   // Clear all data

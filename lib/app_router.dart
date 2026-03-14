@@ -4,7 +4,7 @@ import 'screens/onboarding/phone_number_screen.dart';
 import 'screens/onboarding/sip_address_screen.dart';
 import 'screens/onboarding/sip_credentials_screen.dart';
 import 'screens/onboarding/resume_screen.dart';
-import 'screens/model_download_screen.dart';
+import 'screens/onboarding/api_key_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/active_call_screen.dart';
 import 'screens/settings_screen.dart';
@@ -16,7 +16,7 @@ class AppRouter {
   static const String sipAddress = '/onboarding/sip-address';
   static const String sipCredentials = '/onboarding/sip-credentials';
   static const String resume = '/onboarding/resume';
-  static const String modelDownload = '/model-download';
+  static const String apiKey = '/onboarding/api-key';
   static const String home = '/home';
   static const String activeCall = '/active-call';
   static const String settings = '/settings';
@@ -34,8 +34,8 @@ class AppRouter {
         return _slideRoute(const SipCredentialsScreen(), settings);
       case resume:
         return _slideRoute(const ResumeScreen(), settings);
-      case modelDownload:
-        return _fadeRoute(const ModelDownloadScreen(), settings);
+      case apiKey:
+        return _fadeRoute(const ApiKeyScreen(), settings);
       case home:
         return _fadeRoute(const HomeScreen(), settings);
       case activeCall:

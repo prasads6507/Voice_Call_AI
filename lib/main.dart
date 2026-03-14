@@ -6,7 +6,6 @@ import 'app_router.dart';
 import 'services/sip_service.dart';
 import 'services/stt_service.dart';
 import 'services/llm_service.dart';
-import 'services/model_download_service.dart';
 import 'services/storage_service.dart';
 import 'providers/call_provider.dart';
 
@@ -33,11 +32,10 @@ void main() async {
   if (!isOnboarded) {
     initialRoute = AppRouter.welcome;
   } else {
-    // Check if models are downloaded
-    final whisperReady = await StorageService.whisperModelExists();
-    final gemmaReady = await StorageService.gemmaModelExists();
-    if (!whisperReady || !gemmaReady) {
-      initialRoute = AppRouter.modelDownload;
+    // Check if Gemini API key is configured
+    final hasApiKey = await StorageService.hasGeminiApiKey();
+    if (!hasApiKey) {
+      initialRoute = AppRouter.apiKey;
     } else {
       initialRoute = AppRouter.home;
     }
@@ -58,7 +56,6 @@ class StealthAnswerApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => SipService()),
         ChangeNotifierProvider(create: (_) => SttService()),
         ChangeNotifierProvider(create: (_) => LlmService()),
-        ChangeNotifierProvider(create: (_) => ModelDownloadService()),
         ChangeNotifierProvider(create: (_) => CallProvider()),
       ],
       child: MaterialApp(

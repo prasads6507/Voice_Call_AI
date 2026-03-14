@@ -229,10 +229,10 @@ class _ResumeScreenState extends State<ResumeScreen> {
     await StorageService.setOnboardingComplete(true);
 
     if (mounted) {
-      // Navigate to model download or home screen
+      // Navigate to API key setup
       Navigator.pushNamedAndRemoveUntil(
         context,
-        AppRouter.modelDownload,
+        AppRouter.apiKey,
         (route) => false,
       );
     }

@@ -18,8 +18,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _sipPasswordController = TextEditingController();
   final _sipDomainController = TextEditingController();
   String _resumePreview = '';
-  bool _whisperReady = false;
-  bool _gemmaReady = false;
+  String _geminiApiKey = '';
   bool _testing = false;
   bool? _testResult;
 
@@ -39,8 +38,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final resume = await StorageService.getResume();
     _resumePreview = resume.length > 100 ? '${resume.substring(0, 100)}...' : resume;
     
-    _whisperReady = await StorageService.isWhisperReady();
-    _gemmaReady = await StorageService.isGemmaReady();
+    _geminiApiKey = await StorageService.getGeminiApiKey();
     setState(() {});
   }
 
@@ -191,25 +189,65 @@ class _SettingsScreenState extends State<SettingsScreen> {
             const SizedBox(height: 28),
 
             // AI Models
-            _SectionHeader(title: 'AI MODELS', icon: Icons.smart_toy_outlined),
+            _SectionHeader(title: 'GEMINI AI', icon: Icons.smart_toy_outlined),
             const SizedBox(height: 12),
             _buildCard(
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _ModelRow(
-                    name: 'Whisper Tiny',
-                    status: _whisperReady ? 'Ready' : 'Not downloaded',
-                    size: '~75 MB',
-                    isReady: _whisperReady,
-                    onRedownload: () => Navigator.pushNamed(context, AppRouter.modelDownload),
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.check_circle,
+                        color: AppTheme.accentGreen,
+                        size: 18,
+                      ),
+                      const SizedBox(width: 10),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Moonshine STT', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: AppTheme.textPrimary)),
+                            Text('On-device • Always ready', style: TextStyle(fontSize: 12, color: AppTheme.textMuted)),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                   Divider(height: 20, color: Colors.white.withValues(alpha: 0.06)),
-                  _ModelRow(
-                    name: 'Gemma-3 1B',
-                    status: _gemmaReady ? 'Ready' : 'Not downloaded',
-                    size: '~800 MB',
-                    isReady: _gemmaReady,
-                    onRedownload: () => Navigator.pushNamed(context, AppRouter.modelDownload),
+                  Row(
+                    children: [
+                      Icon(
+                        _geminiApiKey.isNotEmpty ? Icons.check_circle : Icons.circle_outlined,
+                        color: _geminiApiKey.isNotEmpty ? AppTheme.accentGreen : AppTheme.textMuted,
+                        size: 18,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('Gemini Live API', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: AppTheme.textPrimary)),
+                            Text(
+                              _geminiApiKey.isNotEmpty
+                                  ? 'Key: ${_geminiApiKey.substring(0, 8)}...'
+                                  : 'API key not set',
+                              style: TextStyle(fontSize: 12, color: AppTheme.textMuted),
+                            ),
+                          ],
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () async {
+                          await Navigator.pushNamed(context, AppRouter.apiKey);
+                          _loadSettings();
+                        },
+                        child: Text(
+                          _geminiApiKey.isNotEmpty ? 'Change' : 'Add Key',
+                          style: TextStyle(fontSize: 12, color: AppTheme.primary),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -394,48 +432,7 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
-class _ModelRow extends StatelessWidget {
-  final String name;
-  final String status;
-  final String size;
-  final bool isReady;
-  final VoidCallback onRedownload;
 
-  const _ModelRow({
-    required this.name,
-    required this.status,
-    required this.size,
-    required this.isReady,
-    required this.onRedownload,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Icon(
-          isReady ? Icons.check_circle : Icons.circle_outlined,
-          color: isReady ? AppTheme.accentGreen : AppTheme.textMuted,
-          size: 18,
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(name, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: AppTheme.textPrimary)),
-              Text('$status • $size', style: TextStyle(fontSize: 12, color: AppTheme.textMuted)),
-            ],
-          ),
-        ),
-        TextButton(
-          onPressed: onRedownload,
-          child: Text('Re-download', style: TextStyle(fontSize: 12, color: AppTheme.primary)),
-        ),
-      ],
-    );
-  }
-}
 
 class _SettingsRow extends StatelessWidget {
   final String label;

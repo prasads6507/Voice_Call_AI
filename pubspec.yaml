@@ -11,7 +11,7 @@ dependencies:
   dio: ^5.9.2
   flutter:
     sdk: flutter
-  flutter_llama: ^1.1.2
+  sherpa_onnx: ^1.10.40
   flutter_local_notifications: ^19.5.0
   flutter_secure_storage: ^10.0.0
   google_fonts: ^6.3.0
@@ -23,7 +23,7 @@ dependencies:
   siprix_voip_sdk: ^1.0.34
   url_launcher: ^6.3.2
   wakelock_plus: ^1.4.0
-  whisper_flutter_new: ^1.0.1
+  web_socket_channel: ^3.0.1
 
 dev_dependencies:
   flutter_test:

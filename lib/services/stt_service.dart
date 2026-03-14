@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
-import 'storage_service.dart';
 
 /// Question detection keywords
 const List<String> questionKeywords = [
@@ -30,6 +29,10 @@ class SttService extends ChangeNotifier {
   List<String> _recentSentences = [];
   StreamController<String>? _questionController;
 
+  // sherpa_onnx recognizer placeholder
+  // In production: OnlineRecognizer from sherpa_onnx
+  dynamic _recognizer;
+
   bool get isInitialized => _isInitialized;
   bool get isListening => _isListening;
   String get currentTranscription => _currentTranscription;
@@ -37,25 +40,31 @@ class SttService extends ChangeNotifier {
   List<String> get recentSentences => List.unmodifiable(_recentSentences);
   Stream<String>? get questionStream => _questionController?.stream;
 
-  /// Initialize Whisper model
+  /// Initialize Moonshine STT model (bundled, no download needed)
   Future<bool> initialize() async {
     if (_isInitialized) return true;
 
     try {
-      final modelPath = await StorageService.whisperModelPath;
-      final exists = await StorageService.whisperModelExists();
-      
-      if (!exists) {
-        debugPrint('[SttService] Whisper model not found at $modelPath');
-        return false;
-      }
+      // TODO: Initialize sherpa_onnx OnlineRecognizer with Moonshine v2 model
+      // The model files will be bundled as Flutter assets
+      // Example:
+      // final config = OnlineRecognizerConfig(
+      //   model: OnlineModelConfig(
+      //     moonshine: OnlineMoonshineModelConfig(
+      //       preprocessor: 'assets/models/moonshine-tiny-preprocess.onnx',
+      //       encoder: 'assets/models/moonshine-tiny-encode.onnx',
+      //       uncachedDecoder: 'assets/models/moonshine-tiny-uncached-decode.onnx',
+      //       cachedDecoder: 'assets/models/moonshine-tiny-cached-decode.onnx',
+      //     ),
+      //     tokens: 'assets/models/tokens.txt',
+      //   ),
+      //   enableEndpoint: true,
+      // );
+      // _recognizer = OnlineRecognizer(config);
 
-      // Initialize whisper_flutter_new
-      // Note: Actual Whisper initialization depends on the package API
-      // The model file is loaded from the local path
       _isInitialized = true;
       _questionController = StreamController<String>.broadcast();
-      debugPrint('[SttService] Whisper initialized from $modelPath');
+      debugPrint('[SttService] Moonshine STT initialized (on-device)');
       notifyListeners();
       return true;
     } catch (e) {
@@ -73,17 +82,28 @@ class SttService extends ChangeNotifier {
     _recentSentences = [];
     notifyListeners();
     
-    // In a real implementation, this would:
-    // 1. Capture audio from the SIP call's incoming audio stream
-    // 2. Buffer 2-second chunks
-    // 3. Send chunks to Whisper in a separate isolate
-    // 4. Receive transcribed text back
-    _startTranscriptionLoop();
+    debugPrint('[SttService] Moonshine transcription started');
   }
 
-  void _startTranscriptionLoop() {
-    // Simulated loop - in production, this feeds audio buffers to Whisper
-    debugPrint('[SttService] Transcription loop started');
+  /// Feed PCM audio samples to Moonshine recognizer
+  /// [samples] should be 16kHz, 16-bit PCM as Float32List
+  void feedAudioSamples(List<double> samples) {
+    if (!_isInitialized || !_isListening) return;
+
+    // TODO: Feed samples to sherpa_onnx recognizer
+    // _recognizer.acceptWaveform(samples, sampleRate: 16000);
+    // 
+    // // Check for partial/final results
+    // while (_recognizer.isReady()) {
+    //   _recognizer.decode();
+    // }
+    // final result = _recognizer.getResult();
+    // if (result.text.isNotEmpty) {
+    //   processTranscription(result.text);
+    //   if (_recognizer.isEndpoint()) {
+    //     _recognizer.reset();
+    //   }
+    // }
   }
 
   /// Process a transcribed text segment
@@ -132,8 +152,6 @@ class SttService extends ChangeNotifier {
     if (!isQuestion) {
       final words = _currentTranscription.trim().split(' ');
       if (words.length >= 10) {
-        // Natural pause detection would use audio silence detection
-        // For now, check if the sentence seems complete
         final lastChar = _currentTranscription.trim();
         if (lastChar.endsWith('.') || lastChar.endsWith(',')) {
           isQuestion = true;
@@ -153,11 +171,9 @@ class SttService extends ChangeNotifier {
   }
 
   String _extractLastQuestion(String text) {
-    // Find the last complete sentence/question
     final sentences = _splitSentences(text);
     if (sentences.isEmpty) return text.trim();
     
-    // Return the last meaningful sentence
     for (int i = sentences.length - 1; i >= 0; i--) {
       if (sentences[i].trim().length > 10) {
         return sentences[i].trim();
@@ -191,6 +207,7 @@ class SttService extends ChangeNotifier {
   @override
   void dispose() {
     _questionController?.close();
+    // TODO: _recognizer?.free();
     super.dispose();
   }
 }

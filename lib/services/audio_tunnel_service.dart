@@ -6,6 +6,7 @@ class AudioTunnelService extends ChangeNotifier {
   final AudioRecorder _audioRecorder = AudioRecorder();
   StreamSubscription<List<int>>? _audioStreamSubscription;
   bool _isRecording = false;
+  bool _isDisposed = false;
 
   bool get isRecording => _isRecording;
 
@@ -56,23 +57,32 @@ class AudioTunnelService extends ChangeNotifier {
   }
 
   Future<void> stopTunnel() async {
+    await _stopInternal();
+    if (!_isDisposed) notifyListeners();
+  }
+
+  Future<void> _stopInternal() async {
     if (!_isRecording) return;
     
     await _audioStreamSubscription?.cancel();
     _audioStreamSubscription = null;
     
-    if (await _audioRecorder.isRecording()) {
-      await _audioRecorder.stop();
+    try {
+      if (await _audioRecorder.isRecording()) {
+        await _audioRecorder.stop();
+      }
+    } catch (e) {
+      debugPrint('[AudioTunnel] Error stopping recorder: $e');
     }
     
     _isRecording = false;
     debugPrint('[AudioTunnel] Stopped stream');
-    notifyListeners();
   }
 
   @override
   void dispose() {
-    stopTunnel();
+    _isDisposed = true;
+    _stopInternal();
     _audioRecorder.dispose();
     super.dispose();
   }

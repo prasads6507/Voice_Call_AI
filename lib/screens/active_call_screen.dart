@@ -9,445 +9,432 @@ import '../services/sip_service.dart';
 import '../services/storage_service.dart';
 import '../services/audio_tunnel_service.dart';
 
-class ChatMessage {
-  final String text;
-  final bool isAiCoach; // true = AI Coach output
-  final DateTime timestamp;
-  bool isStreaming;
+enum _MsgType { callerQuestion, aiAnswer }
 
-  ChatMessage({
-    required this.text,
-    required this.isAiCoach,
-    DateTime? timestamp,
-    this.isStreaming = false,
-  }) : timestamp = timestamp ?? DateTime.now();
+class _Msg {
+  final _MsgType type;
+  String text;
+  final DateTime ts;
+  bool streaming;
+  _Msg({required this.type, required this.text, this.streaming = false})
+      : ts = DateTime.now();
 }
 
 class ActiveCallScreen extends StatefulWidget {
   const ActiveCallScreen({super.key});
-
   @override
   State<ActiveCallScreen> createState() => _ActiveCallScreenState();
 }
 
 class _ActiveCallScreenState extends State<ActiveCallScreen> {
-  late LlmService _transcriptionEngine;
-  late SipService _sipService;
-  final AudioTunnelService _audioTunnel = AudioTunnelService();
-  final ScrollController _scrollController = ScrollController();
+  LlmService? _llm;
+  SipService? _sip;
+  final AudioTunnelService _audio = AudioTunnelService();
+  final ScrollController _scroll = ScrollController();
 
-  Timer? _durationTimer;
-  Duration _callDuration = Duration.zero;
-  String _resumeText = '';
+  Timer? _timer;
+  Duration _elapsed = Duration.zero;
+  String _resume = '';
+  final List<_Msg> _msgs = [];
 
-  // Chat messages
-  final List<ChatMessage> _messages = [];
+  // ⚠️  CRASH GUARD: prevents double Navigator.pop
+  // When End is pressed, both the button's direct call AND
+  // _onSipChange (CallState.ended) try to pop. Without this flag
+  // the second pop crashes into a black screen.
+  bool _didHangUp = false;
 
   @override
   void initState() {
     super.initState();
     WakelockPlus.enable();
-    _startCallTimer();
-    _loadResume();
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _transcriptionEngine = Provider.of<LlmService>(context, listen: false);
-      _sipService = Provider.of<SipService>(context, listen: false);
-
-      _initializeAI();
-      _transcriptionEngine.addListener(_onTranscriptionUpdate);
-      _sipService.addListener(_onSipUpdate);
-    });
+    _startTimer();
+    _loadAndStart();
   }
 
   @override
   void dispose() {
     WakelockPlus.disable();
-    _durationTimer?.cancel();
-    _audioTunnel.stopTunnel();
-    _audioTunnel.dispose();
-    _transcriptionEngine.removeListener(_onTranscriptionUpdate);
-    _sipService.removeListener(_onSipUpdate);
-    _scrollController.dispose();
+    _timer?.cancel();
+    _audio.stopTunnel();
+    _audio.dispose();
+    _scroll.dispose();
+    if (_llm != null) {
+      _llm!.onCallerSpeechUpdate = null;
+      _llm!.onAIAnswerStreaming = null;
+      _llm!.onTurnComplete = null;
+      _llm!.removeListener(_onLlmChange);
+    }
+    _sip?.removeListener(_onSipChange);
     super.dispose();
   }
 
-  void _onSipUpdate() {
-    if (!mounted) return;
-    if (_sipService.callState == CallState.ended ||
-        _sipService.callState == CallState.idle) {
-      _endCall();
-    }
-  }
+  // ── Init ────────────────────────────────────────────────────
 
-  void _onTranscriptionUpdate() {
-    if (!mounted) return;
-    
-    final currentTrans = _transcriptionEngine.currentTranscription;
-    if (currentTrans.isNotEmpty) {
-      if (_messages.isEmpty || !_messages.last.isStreaming) {
-        setState(() {
-          _messages.add(ChatMessage(
-            text: currentTrans,
-            isAiCoach: true,
-            isStreaming: true,
-          ));
-        });
-      } else {
-        setState(() {
-          _messages[_messages.length - 1] = ChatMessage(
-            text: currentTrans,
-            isAiCoach: true,
-            timestamp: _messages.last.timestamp,
-            isStreaming: _transcriptionEngine.state == LlmState.transcribing,
-          );
-        });
-      }
-      _scrollToBottom();
-    }
-  }
+  Future<void> _loadAndStart() async {
+    _resume = await StorageService.getResume();
 
-  void _onQuestionComplete(String fullQuestion) {
-    if (!mounted) return;
-    
-    setState(() {
-      if (_messages.isNotEmpty && _messages.last.isStreaming) {
-        _messages.last.isStreaming = false;
-      }
+    // Services must be accessed post-frame
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      _llm = Provider.of<LlmService>(context, listen: false);
+      _sip = Provider.of<SipService>(context, listen: false);
+      _sip!.addListener(_onSipChange);
+      _llm!.addListener(_onLlmChange);
+      _wireCallbacks();
+      await _llm!.initialize(resumeText: _resume);
+      await _audio.startTunnel((chunk) => _llm?.sendAudioChunk(chunk));
+      if (mounted) setState(() {});
     });
   }
 
-  Future<void> _loadResume() async {
-    _resumeText = await StorageService.getResume();
+  void _wireCallbacks() {
+    if (_llm == null) return;
+
+    _llm!.onCallerSpeechUpdate = (String text) {
+      if (!mounted) return;
+      setState(() {
+        final last = _msgs.isNotEmpty ? _msgs.last : null;
+        if (last != null && last.streaming && last.type == _MsgType.callerQuestion) {
+          last.text = text;
+        } else {
+          _msgs.add(_Msg(type: _MsgType.callerQuestion, text: text, streaming: true));
+        }
+      });
+      _scrollDown();
+    };
+
+    _llm!.onAIAnswerStreaming = (String text) {
+      if (!mounted) return;
+      setState(() {
+        // Close caller bubble
+        if (_msgs.isNotEmpty && _msgs.last.streaming &&
+            _msgs.last.type == _MsgType.callerQuestion) {
+          _msgs.last.streaming = false;
+        }
+        // Update or create AI bubble
+        if (_msgs.isNotEmpty && _msgs.last.streaming &&
+            _msgs.last.type == _MsgType.aiAnswer) {
+          _msgs.last.text = text;
+        } else {
+          _msgs.add(_Msg(type: _MsgType.aiAnswer, text: text, streaming: true));
+        }
+      });
+      _scrollDown();
+    };
+
+    _llm!.onTurnComplete = (_, __) {
+      if (!mounted) return;
+      setState(() {
+        if (_msgs.isNotEmpty && _msgs.last.streaming) {
+          _msgs.last.streaming = false;
+        }
+      });
+    };
   }
 
-  Future<void> _initializeAI() async {
-    await _transcriptionEngine.initialize(resumeText: _resumeText);
-    
-    // Wire up completion callback
-    _transcriptionEngine.onQuestionComplete = _onQuestionComplete;
+  // ── Listeners ───────────────────────────────────────────────
 
-    // Start Audio Tunnel
-    await _audioTunnel.startTunnel((pcmChunk) {
-      _transcriptionEngine.sendAudioChunk(pcmChunk);
-    });
+  void _onSipChange() {
+    if (!mounted) return;
+    setState(() {});
+    final cs = _sip?.callState;
+    if (cs == CallState.ended || cs == CallState.idle) _hangUp();
+  }
 
+  void _onLlmChange() {
     if (mounted) setState(() {});
   }
 
-  void _startCallTimer() {
-    _durationTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) {
-        setState(() => _callDuration += const Duration(seconds: 1));
+  // ── Timer ───────────────────────────────────────────────────
+
+  void _startTimer() {
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() => _elapsed += const Duration(seconds: 1));
+    });
+  }
+
+  String get _dur {
+    final m = _elapsed.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final s = _elapsed.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+
+  void _scrollDown() {
+    if (!_scroll.hasClients) return;
+    Future.delayed(const Duration(milliseconds: 60), () {
+      if (_scroll.hasClients) {
+        _scroll.animateTo(_scroll.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
       }
     });
   }
 
-  String get _formattedDuration {
-    final minutes = _callDuration.inMinutes.remainder(60);
-    final seconds = _callDuration.inSeconds.remainder(60);
-    return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+  // ── Hang up (double-pop safe) ───────────────────────────────
+
+  void _hangUp() {
+    if (_didHangUp) return; // ← prevents black screen crash
+    _didHangUp = true;
+    _timer?.cancel();
+    _audio.stopTunnel();
+    _llm?.clearSession();
+    if (mounted) Navigator.of(context).pop();
   }
 
-  void _scrollToBottom() {
-    if (_scrollController.hasClients) {
-      Future.delayed(const Duration(milliseconds: 80), () {
-        if (_scrollController.hasClients) {
-          _scrollController.animateTo(
-            _scrollController.position.maxScrollExtent,
-            duration: const Duration(milliseconds: 250),
-            curve: Curves.easeOut,
-          );
-        }
-      });
-    }
-  }
-
-  void _endCall() {
-    _durationTimer?.cancel();
-    _audioTunnel.stopTunnel();
-    _transcriptionEngine.clearSession();
-    if (mounted) Navigator.pop(context);
-  }
+  // ── Build ───────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppTheme.bgLight,
       body: SafeArea(
-        child: Column(
-          children: [
-            _buildHeader(),
-            Expanded(child: _buildChatList()),
-            _buildBottomBar(),
-          ],
-        ),
+        child: Column(children: [
+          _header(),
+          Expanded(child: _chat()),
+          _controls(),
+        ]),
       ),
     );
   }
 
-  Widget _buildHeader() {
+  // ── Header ──────────────────────────────────────────────────
+
+  Widget _header() {
+    final s = _llm?.state ?? LlmState.connecting;
+
+    Color badgeColor;
+    String badgeLabel;
+    bool spin;
+
+    switch (s) {
+      case LlmState.error:
+        badgeColor = AppTheme.accentRed;
+        badgeLabel = 'Error';
+        spin = false;
+      case LlmState.generating:
+        badgeColor = AppTheme.primary;
+        badgeLabel = 'Coaching…';
+        spin = true;
+      case LlmState.transcribing:
+        badgeColor = Colors.orange;
+        badgeLabel = 'Hearing…';
+        spin = true;
+      case LlmState.ready:
+        badgeColor = AppTheme.accentGreen;
+        badgeLabel = 'Listening';
+        spin = false;
+      default:
+        badgeColor = AppTheme.textMuted;
+        badgeLabel = 'Connecting…';
+        spin = true;
+    }
+
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
       decoration: BoxDecoration(
         color: AppTheme.surfaceLight,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 8,
-            offset: const Offset(0, 4),
-          ),
-        ],
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 4))],
       ),
-      child: Row(
-        children: [
-          GestureDetector(
-            onTap: _endCall,
-            child: const Icon(Icons.arrow_back_ios, size: 20, color: AppTheme.textSecondary),
-          ),
-          const SizedBox(width: 12),
-          Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              gradient: AppTheme.primaryGradient,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Icon(Icons.phone_in_talk, color: Colors.white, size: 20),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _sipService.callerNumber.isNotEmpty
-                      ? _sipService.callerNumber
-                      : 'Interview Call',
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: AppTheme.textPrimary,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-                Text(
-                  _formattedDuration,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    color: AppTheme.textMuted,
-                    fontFamily: 'monospace',
-                  ),
+      child: Row(children: [
+        // Back button — does NOT end call, just leaves screen
+        GestureDetector(
+          onTap: () => showDialog(
+            context: context,
+            builder: (_) => AlertDialog(
+              title: const Text('Leave call view?'),
+              content: const Text('AI coaching pauses. The call continues. Tap End Call to fully hang up.'),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(context), child: const Text('Stay')),
+                TextButton(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    if (mounted) Navigator.pop(context);
+                  },
+                  child: const Text('Leave'),
                 ),
               ],
             ),
           ),
-          // Tunnel Status Badge
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-              color: _audioTunnel.isRecording
-                  ? AppTheme.accentGreen.withOpacity(0.12)
-                  : AppTheme.accentRed.withOpacity(0.12),
-              borderRadius: BorderRadius.circular(20),
+          child: const Icon(Icons.arrow_back_ios, size: 20, color: AppTheme.textSecondary),
+        ),
+        const SizedBox(width: 12),
+        Container(
+          width: 42, height: 42,
+          decoration: BoxDecoration(gradient: AppTheme.primaryGradient, borderRadius: BorderRadius.circular(12)),
+          child: const Icon(Icons.phone_in_talk, color: Colors.white, size: 20),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(
+              _sip?.callerNumber.isNotEmpty == true ? _sip!.callerNumber : 'Interview Call',
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+              overflow: TextOverflow.ellipsis,
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 6,
-                  height: 6,
-                  decoration: BoxDecoration(
-                    color: _audioTunnel.isRecording ? AppTheme.accentGreen : AppTheme.accentRed,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  _audioTunnel.isRecording ? 'Listening' : 'Muted',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: _audioTunnel.isRecording ? AppTheme.accentGreen : AppTheme.accentRed,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
+            Text(_dur, style: const TextStyle(fontSize: 13, color: AppTheme.textMuted, fontFamily: 'monospace')),
+          ]),
+        ),
+        // Status badge
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: badgeColor.withOpacity(0.12),
+            borderRadius: BorderRadius.circular(20),
           ),
-        ],
-      ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            spin
+                ? SizedBox(width: 8, height: 8, child: CircularProgressIndicator(strokeWidth: 1.5, color: badgeColor))
+                : Container(width: 6, height: 6, decoration: BoxDecoration(color: badgeColor, shape: BoxShape.circle)),
+            const SizedBox(width: 6),
+            Text(badgeLabel, style: TextStyle(fontSize: 12, color: badgeColor, fontWeight: FontWeight.bold)),
+          ]),
+        ),
+      ]),
     );
   }
 
-  Widget _buildChatList() {
-    if (_messages.isEmpty) {
+  // ── Chat ────────────────────────────────────────────────────
+
+  Widget _chat() {
+    if (_msgs.isEmpty) {
+      final s = _llm?.state ?? LlmState.connecting;
       return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.forum_outlined, size: 56, color: AppTheme.textMuted.withOpacity(0.3)),
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Icon(Icons.hearing_outlined, size: 56, color: AppTheme.textMuted.withOpacity(0.3)),
             const SizedBox(height: 16),
-            const Text(
-              'Listening for conversation...',
-              style: TextStyle(fontSize: 16, color: AppTheme.textSecondary, fontWeight: FontWeight.w500),
-            ),
-            const SizedBox(height: 6),
+            const Text('Listening for the interviewer…',
+                style: TextStyle(fontSize: 16, color: AppTheme.textSecondary, fontWeight: FontWeight.w500),
+                textAlign: TextAlign.center),
+            const SizedBox(height: 8),
             Text(
-              'Questions will be transcribed securely.',
-              style: TextStyle(fontSize: 14, color: AppTheme.textMuted.withOpacity(0.8)),
+              'Questions appear here as they\'re asked.\nYour AI coach responds instantly.',
+              style: TextStyle(fontSize: 14, color: AppTheme.textMuted.withOpacity(0.7), height: 1.5),
+              textAlign: TextAlign.center,
             ),
-          ],
+            const SizedBox(height: 24),
+            if (s == LlmState.connecting)
+              Row(mainAxisSize: MainAxisSize.min, children: [
+                SizedBox(width: 14, height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.primary.withOpacity(0.5))),
+                const SizedBox(width: 8),
+                Text('Connecting to AI…',
+                    style: TextStyle(fontSize: 13, color: AppTheme.textMuted.withOpacity(0.8))),
+              ]),
+            if (s == LlmState.error) ...[
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: AppTheme.accentRed.withOpacity(0.07),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppTheme.accentRed.withOpacity(0.2)),
+                ),
+                child: Text(
+                  _llm?.errorMessage ?? 'Unknown error',
+                  style: const TextStyle(fontSize: 13, color: AppTheme.accentRed),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ],
+          ]),
         ),
       );
     }
 
     return ListView.builder(
-      controller: _scrollController,
+      controller: _scroll,
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-      itemCount: _messages.length,
-      itemBuilder: (context, index) {
-        final msg = _messages[index];
-        return _buildChatBubble(msg);
-      },
+      itemCount: _msgs.length,
+      itemBuilder: (_, i) => _bubble(_msgs[i]),
     );
   }
 
-  Widget _buildChatBubble(ChatMessage msg) {
-    // All AI Coach messages rendered as AI on the right, but spanning most of width
-    final isQ = !msg.isAiCoach;
-
+  Widget _bubble(_Msg msg) {
+    final isCaller = msg.type == _MsgType.callerQuestion;
+    final accent = isCaller ? AppTheme.textMuted : AppTheme.primary;
     return Align(
-      alignment: Alignment.centerRight,
+      alignment: isCaller ? Alignment.centerLeft : Alignment.centerRight,
       child: Container(
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.9,
-        ),
-        margin: const EdgeInsets.only(
-          bottom: 12,
-          left: 16,
-          right: 0,
-        ),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.86),
+        margin: EdgeInsets.only(bottom: 10, left: isCaller ? 0 : 20, right: isCaller ? 20 : 0),
+        padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
         decoration: BoxDecoration(
-          color: AppTheme.primary.withOpacity(0.08),
-          borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(18),
-            topRight: Radius.circular(18),
-            bottomLeft: Radius.circular(18),
-            bottomRight: Radius.circular(4),
+          color: isCaller ? AppTheme.surfaceLightElevated : AppTheme.primary.withOpacity(0.08),
+          borderRadius: BorderRadius.only(
+            topLeft: const Radius.circular(16),
+            topRight: const Radius.circular(16),
+            bottomLeft: isCaller ? const Radius.circular(4) : const Radius.circular(16),
+            bottomRight: isCaller ? const Radius.circular(16) : const Radius.circular(4),
           ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.0),
-              blurRadius: 6,
-              offset: const Offset(0, 2),
-            ),
-          ],
           border: Border.all(
-            color: AppTheme.primary.withOpacity(0.15),
+            color: isCaller ? Colors.black.withOpacity(0.06) : AppTheme.primary.withOpacity(0.18),
           ),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(
-                  Icons.auto_awesome,
-                  size: 14,
-                  color: AppTheme.primary,
-                ),
-                const SizedBox(width: 6),
-                const Text(
-                  'Interview Coach',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: AppTheme.primary,
-                  ),
-                ),
-                if (msg.isStreaming) ...[
-                  const SizedBox(width: 8),
-                  const SizedBox(
-                    width: 10,
-                    height: 10,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: AppTheme.primary,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              msg.text,
-              style: const TextStyle(
-                fontSize: 16,
-                height: 1.4,
-                color: AppTheme.textPrimary,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              '${msg.timestamp.hour.toString().padLeft(2, '0')}:${msg.timestamp.minute.toString().padLeft(2, '0')}',
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(isCaller ? Icons.person_outline : Icons.auto_awesome, size: 12, color: accent),
+            const SizedBox(width: 4),
+            Text(isCaller ? 'Interviewer' : 'AI Coach',
+                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: accent)),
+            if (msg.streaming) ...[
+              const SizedBox(width: 6),
+              SizedBox(width: 9, height: 9, child: CircularProgressIndicator(strokeWidth: 1.5, color: accent)),
+            ],
+          ]),
+          const SizedBox(height: 6),
+          Text(msg.text,
               style: TextStyle(
-                fontSize: 11,
-                color: AppTheme.textMuted.withOpacity(0.8),
-              ),
-            ),
-          ],
-        ),
+                fontSize: 15, height: 1.45,
+                color: isCaller ? AppTheme.textSecondary : AppTheme.textPrimary,
+                fontWeight: isCaller ? FontWeight.w400 : FontWeight.w500,
+              )),
+          const SizedBox(height: 4),
+          Text(
+            '${msg.ts.hour.toString().padLeft(2, '0')}:${msg.ts.minute.toString().padLeft(2, '0')}',
+            style: TextStyle(fontSize: 10, color: AppTheme.textMuted.withOpacity(0.6)),
+          ),
+        ]),
       ),
     );
   }
 
-  Widget _buildBottomBar() {
+  // ── Controls ────────────────────────────────────────────────
+
+  Widget _controls() {
+    final sip = _sip;
     return Container(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
       decoration: BoxDecoration(
         color: AppTheme.surfaceLight,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.03),
-            blurRadius: 10,
-            offset: const Offset(0, -4),
-          ),
-        ],
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 10, offset: const Offset(0, -4))],
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
-          _ControlBtn(
-            icon: _sipService.isMuted ? Icons.mic_off : Icons.mic_none,
-            label: _sipService.isMuted ? 'Unmute' : 'Mute',
-            isActive: _sipService.isMuted,
+          _Btn(
+            icon: sip?.isMuted == true ? Icons.mic_off : Icons.mic_none,
+            label: sip?.isMuted == true ? 'Unmute' : 'Mute',
+            active: sip?.isMuted == true,
             color: AppTheme.accentRed,
-            onTap: () async {
-              await _sipService.toggleMute();
-              setState(() {});
-            },
+            onTap: () async { await sip?.toggleMute(); if (mounted) setState(() {}); },
           ),
-          _ControlBtn(
-            icon: _sipService.isSpeakerOn ? Icons.volume_up : Icons.volume_off,
+          _Btn(
+            icon: sip?.isSpeakerOn == true ? Icons.volume_up : Icons.volume_off,
             label: 'Speaker',
-            isActive: _sipService.isSpeakerOn,
+            active: sip?.isSpeakerOn == true,
             color: AppTheme.primary,
-            onTap: () async {
-              await _sipService.toggleSpeaker();
-              setState(() {});
-            },
+            onTap: () async { await sip?.toggleSpeaker(); if (mounted) setState(() {}); },
           ),
-          _ControlBtn(
+          _Btn(
             icon: Icons.call_end,
             label: 'End',
-            isActive: true,
+            active: true,
             color: AppTheme.accentRed,
-            isEndCall: true,
+            isEnd: true,
             onTap: () async {
-              await _sipService.endCall();
-              _endCall();
+              await sip?.endCall();
+              _hangUp(); // safe — _didHangUp guard prevents double pop
             },
           ),
         ],
@@ -456,66 +443,45 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
   }
 }
 
-class _ControlBtn extends StatelessWidget {
+// ── Button widget ──────────────────────────────────────────────
+
+class _Btn extends StatelessWidget {
   final IconData icon;
   final String label;
-  final bool isActive;
+  final bool active;
   final Color color;
   final VoidCallback onTap;
-  final bool isEndCall;
+  final bool isEnd;
 
-  const _ControlBtn({
-    required this.icon,
-    required this.label,
-    required this.isActive,
-    required this.color,
-    required this.onTap,
-    this.isEndCall = false,
+  const _Btn({
+    required this.icon, required this.label, required this.active,
+    required this.color, required this.onTap, this.isEnd = false,
   });
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onTap,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 56,
-            height: 56,
-            decoration: BoxDecoration(
-              color: isEndCall
-                  ? AppTheme.accentRed
-                  : isActive
-                      ? color.withOpacity(0.1)
-                      : AppTheme.surfaceLightElevated,
-              shape: BoxShape.circle,
-              border: Border.all(
-                color: isEndCall 
-                    ? AppTheme.accentRed 
-                    : isActive
-                        ? color.withOpacity(0.3)
-                        : Colors.transparent,
-                width: 2,
-              ),
-            ),
-            child: Icon(
-              icon,
-              color: isEndCall ? Colors.white : (isActive ? color : AppTheme.textSecondary),
-              size: 26,
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Container(
+          width: 56, height: 56,
+          decoration: BoxDecoration(
+            color: isEnd ? AppTheme.accentRed : active ? color.withOpacity(0.12) : AppTheme.surfaceLightElevated,
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: isEnd ? AppTheme.accentRed : active ? color.withOpacity(0.3) : Colors.transparent,
+              width: 2,
             ),
           ),
-          const SizedBox(height: 6),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-              color: isEndCall ? AppTheme.accentRed : AppTheme.textSecondary,
-            ),
-          ),
-        ],
-      ),
+          child: Icon(icon,
+              color: isEnd ? Colors.white : active ? color : AppTheme.textSecondary,
+              size: 26),
+        ),
+        const SizedBox(height: 6),
+        Text(label, style: TextStyle(
+            fontSize: 12, fontWeight: FontWeight.w500,
+            color: isEnd ? AppTheme.accentRed : AppTheme.textSecondary)),
+      ]),
     );
   }
 }

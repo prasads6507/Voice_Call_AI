@@ -1,223 +1,417 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'storage_service.dart';
 
-enum LlmState {
-  unloaded,
-  connecting,
-  ready,
-  transcribing,
-  error,
-  disconnected,
-}
+enum LlmState { unloaded, connecting, ready, transcribing, generating, error }
 
+/// ══════════════════════════════════════════════════════════════════
+///  GEMINI LIVE  — confirmed working config as of March 2026
+/// ══════════════════════════════════════════════════════════════════
+///
+///  ENDPOINT  : v1beta  (official docs URL — NOT v1alpha)
+///              v1alpha only needed for experimental features like
+///              affective dialog; the 09-2025 model throws 1008 on
+///              v1alpha with "model not found for this API version"
+///
+///  LIVE MODEL: gemini-2.5-flash-native-audio-preview-12-2025
+///              (09-2025 model is deprecated, removed March 19 2026)
+///
+///  STRATEGY  : Same two-step as Cheating Daddy
+///    Step 1 — Gemini Live WS → inputAudioTranscription events
+///    Step 2 — Gemini HTTP generateContentStream → coaching answer
+/// ══════════════════════════════════════════════════════════════════
 class LlmService extends ChangeNotifier {
   LlmState _state = LlmState.unloaded;
-  String _currentTranscription = '';
-  String _errorMessage = '';
+  String _error = '';
   String _apiKey = '';
   String _resumeText = '';
 
-  WebSocketChannel? _channel;
-  StreamSubscription? _subscription;
-  bool _sessionConfigured = false;
+  WebSocketChannel? _ws;
+  StreamSubscription? _wsSub;
+  bool _sessionReady = false;
+  bool _closedByUser = false;
+  int _reconnects = 0;
+  static const _maxReconnects = 3;
 
-  // Triggered when Gemini finishes transcribing a full question turn
-  Function(String)? onQuestionComplete;
+  String _turnText = ''; // accumulates caller speech this turn
+  final List<Map<String, String>> _history = []; // last 10 Q&A
 
-  // Gemini Live API config (Native Audio model for transcription)
-  static const String _model = 'gemini-2.0-flash-exp';
-  static const String _wsBaseUrl =
-      'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
+  // ── Callbacks ──────────────────────────────────────────────────
+  Function(String)? onCallerSpeechUpdate;
+  Function(String)? onAIAnswerStreaming;
+  Function(String, String)? onTurnComplete;
+  Function(String)? onQuestionComplete; // legacy compat
 
+  // ── API constants ──────────────────────────────────────────────
+  //
+  // ✅ CORRECT: v1beta  — this is what Google's official docs show
+  // ❌ WRONG:   v1alpha — causes 1008 "model not found" for native audio models
+  static const _wsUrl =
+      'wss://generativelanguage.googleapis.com/ws/'
+      'google.ai.generativelanguage.v1beta'
+      '.GenerativeService.BidiGenerateContent';
+
+  // ✅ 12-2025 model — current, works on v1beta
+  // ❌ 09-2025 model — deprecated, throws 1008 on v1alpha, removed March 19 2026
+  static const _liveModel = 'gemini-2.5-flash-native-audio-preview-12-2025';
+
+  // Fast text model for coaching answers
+  static const _answerModel = 'gemini-2.0-flash-lite';
+  static const _httpBase = 'https://generativelanguage.googleapis.com/v1beta/models';
+
+  // ── Getters ────────────────────────────────────────────────────
   LlmState get state => _state;
-  String get currentTranscription => _currentTranscription;
-  String get errorMessage => _errorMessage;
-  bool get isConnected => _state == LlmState.ready || _state == LlmState.transcribing;
+  String get errorMessage => _error;
+  String get currentTranscription => _turnText;
+  bool get isConnected =>
+      _state == LlmState.ready ||
+      _state == LlmState.transcribing ||
+      _state == LlmState.generating;
 
-  /// Initialize: load API key and connect WebSocket
+  // ══════════════════════════════════════════════════════════════
+  //  INITIALIZE
+  // ══════════════════════════════════════════════════════════════
+
   Future<bool> initialize({String resumeText = ''}) async {
-    if (_state == LlmState.ready || _state == LlmState.transcribing) return true;
+    if (_sessionReady) return true;
+    if (_state == LlmState.connecting) return false;
 
     _state = LlmState.connecting;
     _resumeText = resumeText;
+    _turnText = '';
+    _closedByUser = false;
+    _reconnects = 0;
     notifyListeners();
 
-    try {
-      _apiKey = await StorageService.getGeminiApiKey();
-      if (_apiKey.isEmpty) {
-        _state = LlmState.error;
-        _errorMessage = 'Gemini API key not configured';
-        notifyListeners();
-        return false;
-      }
+    _apiKey = await StorageService.getGeminiApiKey();
+    if (_apiKey.isEmpty) {
+      _fail('No Gemini API key found. Go to Settings → Add API Key.');
+      return false;
+    }
 
-      await _connectWebSocket();
+    debugPrint('[LLM] API key loaded (${_apiKey.length} chars). Connecting…');
+    return _connect();
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  //  WEBSOCKET
+  // ══════════════════════════════════════════════════════════════
+
+  Future<bool> _connect() async {
+    try {
+      final uri = Uri.parse('$_wsUrl?key=$_apiKey');
+      debugPrint('[LLM] Connecting to: $_wsUrl');
+      _ws = WebSocketChannel.connect(uri);
+      await _ws!.ready;
+      debugPrint('[LLM] ✓ WS open. Sending setup…');
+      _sendSetup();
+      _wsSub = _ws!.stream.listen(_onMsg, onError: _onWsErr, onDone: _onWsDone);
       return true;
     } catch (e) {
-      debugPrint('[LlmService] Init error: $e');
-      _state = LlmState.error;
-      _errorMessage = e.toString();
-      notifyListeners();
+      _fail('WebSocket failed: $e\nCheck your internet connection and API key.');
       return false;
     }
   }
 
-  Future<void> _connectWebSocket() async {
-    final uri = Uri.parse('$_wsBaseUrl?key=$_apiKey');
-    
-    _channel = WebSocketChannel.connect(uri);
-    await _channel!.ready;
-    
-    debugPrint('[LlmService] WebSocket connected to Gemini Live API');
-
-    // Send session setup message
-    _sendSetupMessage();
-
-    // Listen for responses
-    _subscription = _channel!.stream.listen(
-      _onMessage,
-      onError: _onError,
-      onDone: _onDone,
-    );
-  }
-
-  void _sendSetupMessage() {
-    final setupMsg = {
+  // ──────────────────────────────────────────────────────────────
+  //  SETUP MESSAGE
+  //
+  //  Key points confirmed by official Google docs (March 2026):
+  //  • responseModalities: ["AUDIO"] — required for native audio pipeline
+  //  • inputAudioTranscription: {}   — enables transcription events
+  //  • All keys camelCase            — snake_case silently ignored
+  // ──────────────────────────────────────────────────────────────
+  void _sendSetup() {
+    final msg = jsonEncode({
       'setup': {
-        'model': 'models/$_model',
+        'model': 'models/$_liveModel',
         'generationConfig': {
-          'responseModalities': ['TEXT'],
+          'responseModalities': ['AUDIO'],
+          'inputAudioTranscription': {
+            'enableSpeakerDiarization': true,
+            'minSpeakerCount': 2,
+            'maxSpeakerCount': 2,
+          },
         },
         'systemInstruction': {
           'parts': [
             {
-              'text': 'You are an expert interview coach listening to a live phone screen. '
-                  'The candidate\'s resume context is below.\n'
-                  'When the interviewer finishes asking a question, immediately provide the transcribed question and a concise 2-3 sentence answer using the context.\n'
-                  'Format EXACTLY like this:\n'
-                  'Question: [transcript of the question]\n'
-                  'Answer: [your suggested answer]\n\n'
-                  'Resume Context:\n$_resumeText'
+              'text': 'You are a silent listener. Do not respond. '
+                  'Just process the audio input for transcription.'
             }
           ]
         },
       }
-    };
-
-    _channel?.sink.add(jsonEncode(setupMsg));
-    debugPrint('[LlmService] Sent session setup message (Coach mode)');
+    });
+    _ws?.sink.add(msg);
+    debugPrint('[LLM] Setup sent. Waiting for setupComplete…');
   }
 
-  /// Feed raw PCM audio from the AudioTunnel
-  void sendAudioChunk(List<int> pcmBytes) {
-    if (!_sessionConfigured || _channel == null) return;
+  // ══════════════════════════════════════════════════════════════
+  //  AUDIO INPUT
+  // ══════════════════════════════════════════════════════════════
 
-    final msg = {
+  void sendAudioChunk(List<int> pcmBytes) {
+    if (!_sessionReady || _ws == null) return;
+    _ws!.sink.add(jsonEncode({
       'realtimeInput': {
         'mediaChunks': [
-          {
-            'mimeType': 'audio/pcm;rate=16000',
-            'data': base64Encode(pcmBytes),
-          }
+          {'mimeType': 'audio/pcm;rate=16000', 'data': base64Encode(pcmBytes)}
         ]
       }
-    };
-
-    _channel?.sink.add(jsonEncode(msg));
+    }));
   }
 
-  void _onMessage(dynamic message) {
-    try {
-      final data = jsonDecode(message as String) as Map<String, dynamic>;
+  // ══════════════════════════════════════════════════════════════
+  //  MESSAGE HANDLER
+  // ══════════════════════════════════════════════════════════════
 
+  void _onMsg(dynamic raw) {
+    try {
+      final data = jsonDecode(raw as String) as Map<String, dynamic>;
+
+      // ── Session ready ──────────────────────────────────────────
       if (data.containsKey('setupComplete')) {
-        _sessionConfigured = true;
+        _sessionReady = true;
+        _reconnects = 0;
         _state = LlmState.ready;
-        debugPrint('[LlmService] Gemini Live session configured');
+        debugPrint('[LLM] ✅ setupComplete — session ready!');
         notifyListeners();
         return;
       }
 
-      if (data.containsKey('serverContent')) {
-        final serverContent = data['serverContent'] as Map<String, dynamic>;
-        
-        // Handle model turn text (we treat Gemini's "answers" to our system prompt as pure transcription)
-        final modelTurn = serverContent['modelTurn'] as Map<String, dynamic>?;
-        if (modelTurn != null) {
-          final parts = modelTurn['parts'] as List<dynamic>?;
-          if (parts != null) {
-            for (final part in parts) {
-              final textPart = (part as Map<String, dynamic>)['text'] as String?;
-              if (textPart != null) {
-                _state = LlmState.transcribing;
-                _currentTranscription += textPart;
-                notifyListeners();
-              }
-            }
+      final sc = data['serverContent'] as Map<String, dynamic>?;
+      if (sc == null) return;
+
+      // ── Input transcription (caller speech) ───────────────────
+      //
+      // With diarization ON, path is:
+      //   serverContent.inputTranscription.results[].transcript
+      //   serverContent.inputTranscription.results[].speakerId
+      //
+      // Without diarization, path is:
+      //   serverContent.inputTranscription.text  (plain string)
+      //
+      final inputTx = sc['inputTranscription'] as Map<String, dynamic>?;
+      if (inputTx != null) {
+        String chunk = '';
+
+        // Path 1 — diarized results
+        final results = inputTx['results'] as List<dynamic>?;
+        if (results != null && results.isNotEmpty) {
+          for (final r in results) {
+            final m = r as Map<String, dynamic>;
+            final t = m['transcript'] as String? ?? '';
+            if (t.trim().isEmpty) continue;
+            final sid = m['speakerId'] as int?;
+            chunk += '[${sid == 1 ? "Interviewer" : "Candidate"}]: $t\n';
           }
         }
 
-        // Handle specific inputTranscription field if provided by this model version
-        final inputTranscription = serverContent['inputTranscription'] as Map<String, dynamic>?;
-        if (inputTranscription != null) {
-           final parts = inputTranscription['parts'] as List<dynamic>?;
-           if (parts != null) {
-              for (final part in parts) {
-                final textPart = (part as Map<String, dynamic>)['text'] as String?;
-                if (textPart != null) {
-                  _state = LlmState.transcribing;
-                  _currentTranscription += textPart;
-                  notifyListeners();
-                }
-              }
-           }
+        // Path 2 — plain text fallback
+        if (chunk.isEmpty) {
+          final t = inputTx['text'] as String? ?? '';
+          if (t.trim().isNotEmpty) chunk = t;
         }
 
-        final turnComplete = serverContent['turnComplete'] as bool? ?? false;
-        if (turnComplete && _currentTranscription.trim().isNotEmpty) {
-          debugPrint('[LlmService] Question complete: $_currentTranscription');
-          onQuestionComplete?.call(_currentTranscription.trim());
-          
-          // Reset transcription for the next turn
-          _currentTranscription = '';
-          _state = LlmState.ready;
+        if (chunk.isNotEmpty) {
+          _turnText += chunk;
+          if (_state != LlmState.generating) _state = LlmState.transcribing;
+          debugPrint('[LLM] 🎤 "$chunk"');
+          onCallerSpeechUpdate?.call(_turnText);
           notifyListeners();
         }
       }
-    } catch (e) {
-      debugPrint('[LlmService] Message parse error: $e');
+
+      // ── generationComplete = AI done processing audio turn ────
+      // This is the trigger to generate the coaching answer.
+      if (sc['generationComplete'] == true) {
+        final question = _turnText.trim();
+        _turnText = '';
+        debugPrint('[LLM] ⚡ generationComplete. Question: "$question"');
+        if (question.isNotEmpty) {
+          _state = LlmState.generating;
+          notifyListeners();
+          _generateAnswer(question);
+        }
+      }
+
+      // ── turnComplete ──────────────────────────────────────────
+      if (sc['turnComplete'] == true && _state != LlmState.generating) {
+        _state = LlmState.ready;
+        notifyListeners();
+      }
+    } catch (e, st) {
+      debugPrint('[LLM] Parse error: $e\n$st');
     }
   }
 
-  void _onError(dynamic error) {
-    debugPrint('[LlmService] WebSocket error: $error');
+  // ══════════════════════════════════════════════════════════════
+  //  STEP 2 — GENERATE COACHING ANSWER (Gemini HTTP)
+  // ══════════════════════════════════════════════════════════════
+
+  Future<void> _generateAnswer(String question) async {
+    final url = Uri.parse(
+        '$_httpBase/$_answerModel:streamGenerateContent?key=$_apiKey&alt=sse');
+
+    // Build context from recent history
+    final ctx = <Map<String, dynamic>>[];
+    for (final t in _history.take(8)) {
+      ctx
+        ..add({'role': 'user', 'parts': [{'text': t['question']}]})
+        ..add({'role': 'model', 'parts': [{'text': t['answer']}]});
+    }
+
+    final body = jsonEncode({
+      'system_instruction': {
+        'parts': [
+          {
+            'text': '''You are a stealth real-time interview coach.
+The candidate is on a live phone interview RIGHT NOW and needs help.
+
+When given what the interviewer said, produce a suggested answer the candidate can say.
+
+FORMAT — output ONLY this, nothing else:
+💡 [2-3 sentence natural answer]
+
+Rules: Natural speech, under 60 words, draw from resume when relevant, no preamble.
+
+Candidate resume:
+$_resumeText'''
+          }
+        ]
+      },
+      'contents': [
+        ...ctx,
+        {'role': 'user', 'parts': [{'text': question}]},
+      ],
+      'generationConfig': {'temperature': 0.7, 'maxOutputTokens': 200},
+    });
+
+    String full = '';
+    try {
+      final req = http.Request('POST', url)
+        ..headers['Content-Type'] = 'application/json'
+        ..body = body;
+
+      final resp = await http.Client().send(req);
+
+      if (resp.statusCode != 200) {
+        final err = await resp.stream.bytesToString();
+        debugPrint('[LLM] HTTP ${resp.statusCode}: $err');
+        // Don't crash — just show the error and stay ready
+        _state = LlmState.error;
+        _error = 'Answer API error ${resp.statusCode}. '
+            'Check API key has Gemini API access.';
+        notifyListeners();
+        return;
+      }
+
+      await for (final line in resp.stream
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())) {
+        if (!line.startsWith('data: ')) continue;
+        final payload = line.substring(6).trim();
+        if (payload.isEmpty || payload == '[DONE]') continue;
+        try {
+          final j = jsonDecode(payload) as Map<String, dynamic>;
+          final cands = j['candidates'] as List?;
+          if (cands == null || cands.isEmpty) continue;
+          final parts = (cands[0]['content']?['parts']) as List?;
+          for (final p in parts ?? []) {
+            final t = (p as Map)['text'] as String?;
+            if (t != null && t.isNotEmpty) {
+              full += t;
+              onAIAnswerStreaming?.call(full);
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (full.trim().isNotEmpty) {
+        _history.insert(0, {'question': question, 'answer': full.trim()});
+        if (_history.length > 20) _history.removeLast();
+        onTurnComplete?.call(question, full.trim());
+        onQuestionComplete?.call(question);
+      }
+
+      _state = LlmState.ready;
+      notifyListeners();
+    } catch (e) {
+      debugPrint('[LLM] HTTP error: $e');
+      _state = LlmState.ready; // recover, don't get stuck
+      notifyListeners();
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  //  WS ERROR / CLOSE + AUTO RECONNECT
+  // ══════════════════════════════════════════════════════════════
+
+  void _onWsErr(dynamic e) {
+    debugPrint('[LLM] WS error: $e');
+    _fail('Connection error: $e');
+  }
+
+  void _onWsDone() {
+    final closeCode = _ws?.closeCode;
+    final closeReason = _ws?.closeReason;
+    debugPrint('[LLM] WS closed. code=$closeCode reason=$closeReason '
+        'userClosed=$_closedByUser reconnects=$_reconnects/$_maxReconnects');
+    _sessionReady = false;
+    if (_closedByUser) {
+      _state = LlmState.unloaded;
+      notifyListeners();
+      return;
+    }
+    if (_reconnects < _maxReconnects) {
+      _reconnects++;
+      _state = LlmState.connecting;
+      debugPrint('[LLM] Reconnecting $_reconnects/$_maxReconnects in 2s…');
+      notifyListeners();
+      Future.delayed(const Duration(seconds: 2), () {
+        if (!_closedByUser) _connect();
+      });
+    } else {
+      _fail('Lost connection after $_maxReconnects retries. End call and try again.');
+    }
+  }
+
+  void _fail(String msg) {
     _state = LlmState.error;
-    _errorMessage = error.toString();
+    _error = msg;
+    debugPrint('[LLM] ❌ $msg');
     notifyListeners();
   }
 
-  void _onDone() {
-    debugPrint('[LlmService] WebSocket closed');
-    _state = LlmState.disconnected;
-    _sessionConfigured = false;
-    notifyListeners();
-  }
+  // ══════════════════════════════════════════════════════════════
+  //  CONTROL
+  // ══════════════════════════════════════════════════════════════
 
   void clearSession() {
-    _currentTranscription = '';
-    _state = _sessionConfigured ? LlmState.ready : LlmState.unloaded;
+    _turnText = '';
+    _state = _sessionReady ? LlmState.ready : LlmState.unloaded;
     notifyListeners();
   }
 
   void disconnect() {
-    _subscription?.cancel();
-    _channel?.sink.close();
-    _channel = null;
+    _closedByUser = true;
+    _wsSub?.cancel();
+    _wsSub = null;
+    _ws?.sink.close();
+    _ws = null;
+    _sessionReady = false;
+    _turnText = '';
     _state = LlmState.unloaded;
-    _sessionConfigured = false;
     notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    disconnect();
+    super.dispose();
   }
 }

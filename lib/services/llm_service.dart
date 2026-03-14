@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'storage_service.dart';
@@ -9,41 +8,41 @@ enum LlmState {
   unloaded,
   connecting,
   ready,
-  generating,
+  transcribing,
   error,
   disconnected,
 }
 
 class LlmService extends ChangeNotifier {
   LlmState _state = LlmState.unloaded;
-  String _currentAnswer = '';
-  String _currentQuestion = '';
-  final List<Map<String, String>> _answerHistory = [];
+  String _currentTranscription = '';
   String _errorMessage = '';
   String _apiKey = '';
+  String _resumeText = '';
 
   WebSocketChannel? _channel;
   StreamSubscription? _subscription;
   bool _sessionConfigured = false;
 
-  // Gemini Live API config
-  static const String _model = 'gemini-2.0-flash-live-001';
+  // Triggered when Gemini finishes transcribing a full question turn
+  Function(String)? onQuestionComplete;
+
+  // Gemini Live API config (Native Audio model for transcription)
+  static const String _model = 'gemini-2.0-flash-exp';
   static const String _wsBaseUrl =
       'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
 
   LlmState get state => _state;
-  String get currentAnswer => _currentAnswer;
-  String get currentQuestion => _currentQuestion;
-  List<Map<String, String>> get answerHistory => List.unmodifiable(_answerHistory);
+  String get currentTranscription => _currentTranscription;
   String get errorMessage => _errorMessage;
-  bool get isGenerating => _state == LlmState.generating;
-  bool get isConnected => _state == LlmState.ready || _state == LlmState.generating;
+  bool get isConnected => _state == LlmState.ready || _state == LlmState.transcribing;
 
   /// Initialize: load API key and connect WebSocket
-  Future<bool> initialize() async {
-    if (_state == LlmState.ready || _state == LlmState.generating) return true;
+  Future<bool> initialize({String resumeText = ''}) async {
+    if (_state == LlmState.ready || _state == LlmState.transcribing) return true;
 
     _state = LlmState.connecting;
+    _resumeText = resumeText;
     notifyListeners();
 
     try {
@@ -66,7 +65,6 @@ class LlmService extends ChangeNotifier {
     }
   }
 
-  /// Connect to Gemini Live API WebSocket
   Future<void> _connectWebSocket() async {
     final uri = Uri.parse('$_wsBaseUrl?key=$_apiKey');
     
@@ -86,25 +84,23 @@ class LlmService extends ChangeNotifier {
     );
   }
 
-  /// Send initial session configuration
   void _sendSetupMessage() {
     final setupMsg = {
       'setup': {
         'model': 'models/$_model',
         'generationConfig': {
           'responseModalities': ['TEXT'],
-          'temperature': 0.7,
-          'maxOutputTokens': 512,
         },
         'systemInstruction': {
           'parts': [
             {
-              'text': 'You are a confident, articulate interview coach helping someone '
-                  'answer interview questions naturally. You are silently listening to '
-                  'an ongoing phone interview. When a question is detected, provide a '
-                  'concise 2-3 sentence answer using the candidate\'s resume context. '
-                  'Sound human, specific, and confident. Respond ONLY with the answer text, '
-                  'no preamble or labels.'
+              'text': 'You are an expert interview coach listening to a live phone screen. '
+                  'The candidate\'s resume context is below.\n'
+                  'When the interviewer finishes asking a question, immediately provide the transcribed question and a concise 2-3 sentence answer using the context.\n'
+                  'Format EXACTLY like this:\n'
+                  'Question: [transcript of the question]\n'
+                  'Answer: [your suggested answer]\n\n'
+                  'Resume Context:\n$_resumeText'
             }
           ]
         },
@@ -112,15 +108,31 @@ class LlmService extends ChangeNotifier {
     };
 
     _channel?.sink.add(jsonEncode(setupMsg));
-    debugPrint('[LlmService] Sent session setup message');
+    debugPrint('[LlmService] Sent session setup message (Coach mode)');
   }
 
-  /// Handle incoming WebSocket messages
+  /// Feed raw PCM audio from the AudioTunnel
+  void sendAudioChunk(List<int> pcmBytes) {
+    if (!_sessionConfigured || _channel == null) return;
+
+    final msg = {
+      'realtimeInput': {
+        'mediaChunks': [
+          {
+            'mimeType': 'audio/pcm;rate=16000',
+            'data': base64Encode(pcmBytes),
+          }
+        ]
+      }
+    };
+
+    _channel?.sink.add(jsonEncode(msg));
+  }
+
   void _onMessage(dynamic message) {
     try {
       final data = jsonDecode(message as String) as Map<String, dynamic>;
 
-      // Handle setup complete
       if (data.containsKey('setupComplete')) {
         _sessionConfigured = true;
         _state = LlmState.ready;
@@ -129,32 +141,48 @@ class LlmService extends ChangeNotifier {
         return;
       }
 
-      // Handle server content (streamed answer)
       if (data.containsKey('serverContent')) {
         final serverContent = data['serverContent'] as Map<String, dynamic>;
-        final modelTurn = serverContent['modelTurn'] as Map<String, dynamic>?;
         
+        // Handle model turn text (we treat Gemini's "answers" to our system prompt as pure transcription)
+        final modelTurn = serverContent['modelTurn'] as Map<String, dynamic>?;
         if (modelTurn != null) {
           final parts = modelTurn['parts'] as List<dynamic>?;
           if (parts != null) {
             for (final part in parts) {
               final textPart = (part as Map<String, dynamic>)['text'] as String?;
               if (textPart != null) {
-                _currentAnswer += textPart;
+                _state = LlmState.transcribing;
+                _currentTranscription += textPart;
                 notifyListeners();
               }
             }
           }
         }
 
-        // Check if turn is complete
+        // Handle specific inputTranscription field if provided by this model version
+        final inputTranscription = serverContent['inputTranscription'] as Map<String, dynamic>?;
+        if (inputTranscription != null) {
+           final parts = inputTranscription['parts'] as List<dynamic>?;
+           if (parts != null) {
+              for (final part in parts) {
+                final textPart = (part as Map<String, dynamic>)['text'] as String?;
+                if (textPart != null) {
+                  _state = LlmState.transcribing;
+                  _currentTranscription += textPart;
+                  notifyListeners();
+                }
+              }
+           }
+        }
+
         final turnComplete = serverContent['turnComplete'] as bool? ?? false;
-        if (turnComplete && _currentAnswer.isNotEmpty) {
-          // Save to history
-          _answerHistory.insert(0, {
-            'question': _currentQuestion,
-            'answer': _currentAnswer,
-          });
+        if (turnComplete && _currentTranscription.trim().isNotEmpty) {
+          debugPrint('[LlmService] Question complete: $_currentTranscription');
+          onQuestionComplete?.call(_currentTranscription.trim());
+          
+          // Reset transcription for the next turn
+          _currentTranscription = '';
           _state = LlmState.ready;
           notifyListeners();
         }
@@ -178,143 +206,18 @@ class LlmService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Generate answer for a detected interview question
-  Future<void> generateAnswer(String question, String resumeText) async {
-    if (!_sessionConfigured || _channel == null) {
-      debugPrint('[LlmService] Cannot generate: session not configured');
-      // Try to reconnect
-      await initialize();
-      if (!_sessionConfigured) return;
-    }
-
-    _state = LlmState.generating;
-    _currentQuestion = question;
-    _currentAnswer = '';
-    notifyListeners();
-
-    // Build the prompt with resume context
-    final relevantContext = _searchContext(question, resumeText);
-    final prompt = 'Resume Context:\n$relevantContext\n\n'
-        'Interview Question: $question\n\n'
-        'Provide a concise, confident 2-3 sentence answer:';
-
-    // Send as client content
-    final msg = {
-      'clientContent': {
-        'turns': [
-          {
-            'role': 'user',
-            'parts': [
-              {'text': prompt}
-            ]
-          }
-        ],
-        'turnComplete': true,
-      }
-    };
-
-    _channel?.sink.add(jsonEncode(msg));
-    debugPrint('[LlmService] Sent question to Gemini: $question');
-  }
-
-  /// Send raw audio to Gemini as a silent listener (base64 PCM)
-  void sendAudioChunk(List<int> pcmBytes) {
-    if (!_sessionConfigured || _channel == null) return;
-
-    final msg = {
-      'realtimeInput': {
-        'mediaChunks': [
-          {
-            'mimeType': 'audio/pcm;rate=16000',
-            'data': base64Encode(pcmBytes),
-          }
-        ]
-      }
-    };
-
-    _channel?.sink.add(jsonEncode(msg));
-  }
-
-  /// Search resume for most relevant paragraphs
-  String _searchContext(String question, String resumeText) {
-    if (resumeText.trim().isEmpty) {
-      return 'No resume context provided.';
-    }
-
-    final paragraphs = resumeText
-        .split(RegExp(r'\n\s*\n'))
-        .where((p) => p.trim().length > 20)
-        .toList();
-
-    if (paragraphs.isEmpty) return resumeText;
-
-    final questionWords = question.toLowerCase().split(RegExp(r'\W+'));
-    
-    final scored = paragraphs.map((p) {
-      final paragraphWords = p.toLowerCase().split(RegExp(r'\W+'));
-      int overlap = 0;
-      for (final word in questionWords) {
-        if (word.length > 2 && paragraphWords.contains(word)) {
-          overlap++;
-        }
-      }
-      return MapEntry(p, overlap);
-    }).toList();
-
-    scored.sort((a, b) => b.value.compareTo(a.value));
-    final topParagraphs = scored.take(2).map((e) => e.key).toList();
-
-    return topParagraphs.join('\n\n');
-  }
-
-  /// Regenerate the last answer
-  Future<void> regenerateAnswer(String resumeText) async {
-    if (_currentQuestion.isEmpty) return;
-    await generateAnswer(_currentQuestion, resumeText);
-  }
-
-  /// Cancel current generation
-  void cancelGeneration() {
-    _state = LlmState.ready;
-    notifyListeners();
-  }
-
-  /// Clear history
-  void clearHistory() {
-    _answerHistory.clear();
-    _currentAnswer = '';
-    _currentQuestion = '';
-    notifyListeners();
-  }
-
-  /// Clear session state for call end (keeps connection alive for next call)
   void clearSession() {
-    _answerHistory.clear();
-    _currentAnswer = '';
-    _currentQuestion = '';
+    _currentTranscription = '';
     _state = _sessionConfigured ? LlmState.ready : LlmState.unloaded;
     notifyListeners();
   }
 
-  /// Disconnect WebSocket
   void disconnect() {
     _subscription?.cancel();
     _channel?.sink.close();
     _channel = null;
+    _state = LlmState.unloaded;
     _sessionConfigured = false;
-    _state = LlmState.disconnected;
     notifyListeners();
-  }
-
-  /// Reconnect if disconnected
-  Future<void> reconnect() async {
-    disconnect();
-    await initialize();
-  }
-
-  @override
-  void dispose() {
-    disconnect();
-    super.dispose();
   }
 }

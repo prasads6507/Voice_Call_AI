@@ -27,7 +27,7 @@ class OptionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: AppTheme.surfaceDarkCard,
+        color: AppTheme.surfaceLightCard,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
           color: isRecommended
@@ -58,7 +58,7 @@ class OptionCard extends StatelessWidget {
                   decoration: BoxDecoration(
                     color: isRecommended
                         ? AppTheme.primary.withValues(alpha: 0.2)
-                        : AppTheme.surfaceDarkElevated,
+                        : AppTheme.surfaceLightElevated,
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Icon(

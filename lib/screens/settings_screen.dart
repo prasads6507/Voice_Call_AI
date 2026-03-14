@@ -334,7 +334,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppTheme.surfaceDarkCard,
+        color: AppTheme.surfaceLightCard,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
       ),
@@ -385,7 +385,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.surfaceDarkElevated,
+        backgroundColor: AppTheme.surfaceLightElevated,
         title: const Text('Clear Resume?'),
         content: const Text('This will remove all your resume/context data.'),
         actions: [

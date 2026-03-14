@@ -2,22 +2,22 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
+
 import '../app_theme.dart';
-import '../services/stt_service.dart';
 import '../services/llm_service.dart';
 import '../services/sip_service.dart';
 import '../services/storage_service.dart';
+import '../services/audio_tunnel_service.dart';
 
-/// A single chat message (question or answer)
 class ChatMessage {
   final String text;
-  final bool isQuestion; // true = caller question, false = AI answer
+  final bool isAiCoach; // true = AI Coach output
   final DateTime timestamp;
-  bool isStreaming; // true while Gemini is still generating
+  bool isStreaming;
 
   ChatMessage({
     required this.text,
-    required this.isQuestion,
+    required this.isAiCoach,
     DateTime? timestamp,
     this.isStreaming = false,
   }) : timestamp = timestamp ?? DateTime.now();
@@ -30,11 +30,10 @@ class ActiveCallScreen extends StatefulWidget {
   State<ActiveCallScreen> createState() => _ActiveCallScreenState();
 }
 
-class _ActiveCallScreenState extends State<ActiveCallScreen>
-    with TickerProviderStateMixin {
-  late SttService _sttService;
-  late LlmService _llmService;
+class _ActiveCallScreenState extends State<ActiveCallScreen> {
+  late LlmService _transcriptionEngine;
   late SipService _sipService;
+  final AudioTunnelService _audioTunnel = AudioTunnelService();
   final ScrollController _scrollController = ScrollController();
 
   Timer? _durationTimer;
@@ -43,7 +42,6 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
 
   // Chat messages
   final List<ChatMessage> _messages = [];
-  StreamSubscription<String>? _questionSubscription;
 
   @override
   void initState() {
@@ -53,12 +51,11 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
     _loadResume();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _sttService = Provider.of<SttService>(context, listen: false);
-      _llmService = Provider.of<LlmService>(context, listen: false);
+      _transcriptionEngine = Provider.of<LlmService>(context, listen: false);
       _sipService = Provider.of<SipService>(context, listen: false);
 
       _initializeAI();
-      _llmService.addListener(_onLlmUpdate);
+      _transcriptionEngine.addListener(_onTranscriptionUpdate);
       _sipService.addListener(_onSipUpdate);
     });
   }
@@ -67,8 +64,9 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
   void dispose() {
     WakelockPlus.disable();
     _durationTimer?.cancel();
-    _questionSubscription?.cancel();
-    _llmService.removeListener(_onLlmUpdate);
+    _audioTunnel.stopTunnel();
+    _audioTunnel.dispose();
+    _transcriptionEngine.removeListener(_onTranscriptionUpdate);
     _sipService.removeListener(_onSipUpdate);
     _scrollController.dispose();
     super.dispose();
@@ -76,39 +74,47 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
 
   void _onSipUpdate() {
     if (!mounted) return;
-    // If call ended externally
     if (_sipService.callState == CallState.ended ||
         _sipService.callState == CallState.idle) {
       _endCall();
     }
   }
 
-  void _onLlmUpdate() {
+  void _onTranscriptionUpdate() {
     if (!mounted) return;
-
-    // Find the last AI message (if any) and update it
-    final lastAiIdx = _messages.lastIndexWhere((m) => !m.isQuestion);
-    if (lastAiIdx >= 0 && _messages[lastAiIdx].isStreaming) {
-      setState(() {
-        _messages[lastAiIdx] = ChatMessage(
-          text: _llmService.currentAnswer,
-          isQuestion: false,
-          timestamp: _messages[lastAiIdx].timestamp,
-          isStreaming: _llmService.isGenerating,
-        );
-      });
-    } else if (_llmService.isGenerating && _llmService.currentAnswer.isNotEmpty) {
-      // New answer started
-      setState(() {
-        _messages.add(ChatMessage(
-          text: _llmService.currentAnswer,
-          isQuestion: false,
-          isStreaming: true,
-        ));
-      });
+    
+    final currentTrans = _transcriptionEngine.currentTranscription;
+    if (currentTrans.isNotEmpty) {
+      if (_messages.isEmpty || !_messages.last.isStreaming) {
+        setState(() {
+          _messages.add(ChatMessage(
+            text: currentTrans,
+            isAiCoach: true,
+            isStreaming: true,
+          ));
+        });
+      } else {
+        setState(() {
+          _messages[_messages.length - 1] = ChatMessage(
+            text: currentTrans,
+            isAiCoach: true,
+            timestamp: _messages.last.timestamp,
+            isStreaming: _transcriptionEngine.state == LlmState.transcribing,
+          );
+        });
+      }
+      _scrollToBottom();
     }
+  }
 
-    _scrollToBottom();
+  void _onQuestionComplete(String fullQuestion) {
+    if (!mounted) return;
+    
+    setState(() {
+      if (_messages.isNotEmpty && _messages.last.isStreaming) {
+        _messages.last.isStreaming = false;
+      }
+    });
   }
 
   Future<void> _loadResume() async {
@@ -116,21 +122,16 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
   }
 
   Future<void> _initializeAI() async {
-    await _sttService.initialize();
-    await _llmService.initialize();
+    await _transcriptionEngine.initialize(resumeText: _resumeText);
+    
+    // Wire up completion callback
+    _transcriptionEngine.onQuestionComplete = _onQuestionComplete;
 
-    // Subscribe to detected questions from STT
-    _questionSubscription = _sttService.questionStream?.listen((question) {
-      debugPrint('[ActiveCall] Question detected: $question');
-      setState(() {
-        _messages.add(ChatMessage(text: question, isQuestion: true));
-      });
-      _scrollToBottom();
-      // Send to Gemini
-      _llmService.generateAnswer(question, _resumeText);
+    // Start Audio Tunnel
+    await _audioTunnel.startTunnel((pcmChunk) {
+      _transcriptionEngine.sendAudioChunk(pcmChunk);
     });
 
-    _sttService.startListening();
     if (mounted) setState(() {});
   }
 
@@ -164,23 +165,20 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
 
   void _endCall() {
     _durationTimer?.cancel();
-    _sttService.stopListening();
-    _llmService.clearSession();
+    _audioTunnel.stopTunnel();
+    _transcriptionEngine.clearSession();
     if (mounted) Navigator.pop(context);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0B0B14),
+      backgroundColor: AppTheme.bgLight,
       body: SafeArea(
         child: Column(
           children: [
-            // Header
             _buildHeader(),
-            // Chat messages
             Expanded(child: _buildChatList()),
-            // Bottom bar
             _buildBottomBar(),
           ],
         ),
@@ -190,35 +188,34 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
 
   Widget _buildHeader() {
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
       decoration: BoxDecoration(
-        color: const Color(0xFF0D0D18),
-        border: Border(
-          bottom: BorderSide(color: Colors.white.withValues(alpha: 0.06)),
-        ),
+        color: AppTheme.surfaceLight,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: Row(
         children: [
-          // Back button
           GestureDetector(
             onTap: _endCall,
-            child: const Icon(Icons.arrow_back_ios, size: 18, color: AppTheme.textSecondary),
+            child: const Icon(Icons.arrow_back_ios, size: 20, color: AppTheme.textSecondary),
           ),
-          const SizedBox(width: 10),
-          // Caller avatar
+          const SizedBox(width: 12),
           Container(
-            width: 38,
-            height: 38,
+            width: 42,
+            height: 42,
             decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [AppTheme.accentGreen, AppTheme.accent],
-              ),
+              gradient: AppTheme.primaryGradient,
               borderRadius: BorderRadius.circular(12),
             ),
-            child: const Icon(Icons.phone_in_talk, color: Colors.white, size: 18),
+            child: const Icon(Icons.phone_in_talk, color: Colors.white, size: 20),
           ),
-          const SizedBox(width: 10),
-          // Caller info
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -228,16 +225,16 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
                       ? _sipService.callerNumber
                       : 'Interview Call',
                   style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
                     color: AppTheme.textPrimary,
                   ),
                   overflow: TextOverflow.ellipsis,
                 ),
                 Text(
                   _formattedDuration,
-                  style: TextStyle(
-                    fontSize: 12,
+                  style: const TextStyle(
+                    fontSize: 13,
                     color: AppTheme.textMuted,
                     fontFamily: 'monospace',
                   ),
@@ -245,14 +242,14 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
               ],
             ),
           ),
-          // Gemini status chip
+          // Tunnel Status Badge
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             decoration: BoxDecoration(
-              color: _llmService.isConnected
-                  ? AppTheme.accentGreen.withValues(alpha: 0.15)
-                  : AppTheme.accentRed.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(8),
+              color: _audioTunnel.isRecording
+                  ? AppTheme.accentGreen.withOpacity(0.12)
+                  : AppTheme.accentRed.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(20),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
@@ -261,17 +258,17 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
                   width: 6,
                   height: 6,
                   decoration: BoxDecoration(
-                    color: _llmService.isConnected ? AppTheme.accentGreen : AppTheme.accentRed,
+                    color: _audioTunnel.isRecording ? AppTheme.accentGreen : AppTheme.accentRed,
                     shape: BoxShape.circle,
                   ),
                 ),
-                const SizedBox(width: 5),
+                const SizedBox(width: 6),
                 Text(
-                  _llmService.isConnected ? 'Gemini' : 'Offline',
+                  _audioTunnel.isRecording ? 'Listening' : 'Muted',
                   style: TextStyle(
-                    fontSize: 11,
-                    color: _llmService.isConnected ? AppTheme.accentGreen : AppTheme.accentRed,
-                    fontWeight: FontWeight.w600,
+                    fontSize: 12,
+                    color: _audioTunnel.isRecording ? AppTheme.accentGreen : AppTheme.accentRed,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
               ],
@@ -288,16 +285,16 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.forum_outlined, size: 48, color: AppTheme.textMuted.withValues(alpha: 0.3)),
-            const SizedBox(height: 12),
-            Text(
+            Icon(Icons.forum_outlined, size: 56, color: AppTheme.textMuted.withOpacity(0.3)),
+            const SizedBox(height: 16),
+            const Text(
               'Listening for conversation...',
-              style: TextStyle(fontSize: 15, color: AppTheme.textMuted),
+              style: TextStyle(fontSize: 16, color: AppTheme.textSecondary, fontWeight: FontWeight.w500),
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 6),
             Text(
-              'Questions & AI answers will appear here',
-              style: TextStyle(fontSize: 13, color: AppTheme.textMuted.withValues(alpha: 0.6)),
+              'Questions will be transcribed securely.',
+              style: TextStyle(fontSize: 14, color: AppTheme.textMuted.withOpacity(0.8)),
             ),
           ],
         ),
@@ -306,7 +303,7 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
 
     return ListView.builder(
       controller: _scrollController,
-      padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
       itemCount: _messages.length,
       itemBuilder: (context, index) {
         final msg = _messages[index];
@@ -316,87 +313,88 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
   }
 
   Widget _buildChatBubble(ChatMessage msg) {
-    final isQ = msg.isQuestion;
+    // All AI Coach messages rendered as AI on the right, but spanning most of width
+    final isQ = !msg.isAiCoach;
 
     return Align(
-      alignment: isQ ? Alignment.centerLeft : Alignment.centerRight,
+      alignment: Alignment.centerRight,
       child: Container(
         constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.82,
+          maxWidth: MediaQuery.of(context).size.width * 0.9,
         ),
-        margin: EdgeInsets.only(
-          bottom: 10,
-          left: isQ ? 0 : 36,
-          right: isQ ? 36 : 0,
+        margin: const EdgeInsets.only(
+          bottom: 12,
+          left: 16,
+          right: 0,
         ),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
-          color: isQ
-              ? const Color(0xFF1A1A2E)
-              : AppTheme.primary.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(16),
-            topRight: const Radius.circular(16),
-            bottomLeft: isQ ? const Radius.circular(4) : const Radius.circular(16),
-            bottomRight: isQ ? const Radius.circular(16) : const Radius.circular(4),
+          color: AppTheme.primary.withOpacity(0.08),
+          borderRadius: const BorderRadius.only(
+            topLeft: Radius.circular(18),
+            topRight: Radius.circular(18),
+            bottomLeft: Radius.circular(18),
+            bottomRight: Radius.circular(4),
           ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.0),
+              blurRadius: 6,
+              offset: const Offset(0, 2),
+            ),
+          ],
           border: Border.all(
-            color: isQ
-                ? Colors.white.withValues(alpha: 0.06)
-                : AppTheme.primary.withValues(alpha: 0.15),
+            color: AppTheme.primary.withOpacity(0.15),
           ),
         ),
         child: Column(
-          crossAxisAlignment: isQ ? CrossAxisAlignment.start : CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Label
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(
-                  isQ ? Icons.mic : Icons.auto_awesome,
-                  size: 12,
-                  color: isQ ? AppTheme.accent : AppTheme.primary,
+                const Icon(
+                  Icons.auto_awesome,
+                  size: 14,
+                  color: AppTheme.primary,
                 ),
-                const SizedBox(width: 4),
-                Text(
-                  isQ ? 'Caller' : 'Gemini',
+                const SizedBox(width: 6),
+                const Text(
+                  'Interview Coach',
                   style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: isQ ? AppTheme.accent : AppTheme.primary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.primary,
                   ),
                 ),
                 if (msg.isStreaming) ...[
-                  const SizedBox(width: 6),
-                  SizedBox(
+                  const SizedBox(width: 8),
+                  const SizedBox(
                     width: 10,
                     height: 10,
                     child: CircularProgressIndicator(
-                      strokeWidth: 1.5,
+                      strokeWidth: 2,
                       color: AppTheme.primary,
                     ),
                   ),
                 ],
               ],
             ),
-            const SizedBox(height: 6),
-            // Message text
+            const SizedBox(height: 8),
             Text(
               msg.text,
-              style: TextStyle(
-                fontSize: 15,
-                height: 1.45,
-                color: isQ ? AppTheme.textPrimary : AppTheme.textPrimary,
+              style: const TextStyle(
+                fontSize: 16,
+                height: 1.4,
+                color: AppTheme.textPrimary,
               ),
             ),
-            // Timestamp
-            const SizedBox(height: 4),
+            const SizedBox(height: 6),
             Text(
               '${msg.timestamp.hour.toString().padLeft(2, '0')}:${msg.timestamp.minute.toString().padLeft(2, '0')}',
               style: TextStyle(
-                fontSize: 10,
-                color: AppTheme.textMuted.withValues(alpha: 0.5),
+                fontSize: 11,
+                color: AppTheme.textMuted.withOpacity(0.8),
               ),
             ),
           ],
@@ -407,12 +405,16 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
 
   Widget _buildBottomBar() {
     return Container(
-      padding: const EdgeInsets.fromLTRB(20, 10, 20, 14),
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
       decoration: BoxDecoration(
-        color: const Color(0xFF0D0D18),
-        border: Border(
-          top: BorderSide(color: Colors.white.withValues(alpha: 0.06)),
-        ),
+        color: AppTheme.surfaceLight,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.03),
+            blurRadius: 10,
+            offset: const Offset(0, -4),
+          ),
+        ],
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -431,7 +433,7 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
             icon: _sipService.isSpeakerOn ? Icons.volume_up : Icons.volume_off,
             label: 'Speaker',
             isActive: _sipService.isSpeakerOn,
-            color: AppTheme.accent,
+            color: AppTheme.primary,
             onTap: () async {
               await _sipService.toggleSpeaker();
               setState(() {});
@@ -479,33 +481,37 @@ class _ControlBtn extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: 52,
-            height: 52,
+            width: 56,
+            height: 56,
             decoration: BoxDecoration(
               color: isEndCall
                   ? AppTheme.accentRed
                   : isActive
-                      ? color.withValues(alpha: 0.2)
-                      : AppTheme.surfaceDarkElevated,
-              borderRadius: BorderRadius.circular(16),
+                      ? color.withOpacity(0.1)
+                      : AppTheme.surfaceLightElevated,
+              shape: BoxShape.circle,
               border: Border.all(
-                color: isActive
-                    ? color.withValues(alpha: 0.4)
-                    : Colors.white.withValues(alpha: 0.08),
+                color: isEndCall 
+                    ? AppTheme.accentRed 
+                    : isActive
+                        ? color.withOpacity(0.3)
+                        : Colors.transparent,
+                width: 2,
               ),
             ),
             child: Icon(
               icon,
-              color: isEndCall ? Colors.white : color,
-              size: 24,
+              color: isEndCall ? Colors.white : (isActive ? color : AppTheme.textSecondary),
+              size: 26,
             ),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 6),
           Text(
             label,
             style: TextStyle(
-              fontSize: 11,
-              color: isEndCall ? AppTheme.accentRed : AppTheme.textMuted,
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              color: isEndCall ? AppTheme.accentRed : AppTheme.textSecondary,
             ),
           ),
         ],

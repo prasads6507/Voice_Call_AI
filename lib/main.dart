@@ -18,12 +18,12 @@ void main() async {
     DeviceOrientation.portraitDown,
   ]);
 
-  // Set system UI overlay style for dark theme
+  // Set system UI overlay style for light theme
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
-    statusBarIconBrightness: Brightness.light,
-    systemNavigationBarColor: AppTheme.bgDark,
-    systemNavigationBarIconBrightness: Brightness.light,
+    statusBarIconBrightness: Brightness.dark,
+    systemNavigationBarColor: AppTheme.bgLight,
+    systemNavigationBarIconBrightness: Brightness.dark,
   ));
 
   // Determine initial route
@@ -61,7 +61,7 @@ class StealthAnswerApp extends StatelessWidget {
       child: MaterialApp(
         title: 'StealthAnswer',
         debugShowCheckedModeBanner: false,
-        theme: AppTheme.darkTheme,
+        theme: AppTheme.lightTheme,
         initialRoute: initialRoute,
         onGenerateRoute: AppRouter.generateRoute,
       ),

@@ -113,7 +113,7 @@ class SetupGuideScreen extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                color: AppTheme.surfaceDarkCard,
+                color: AppTheme.surfaceLightCard,
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(
                   color: Colors.white.withValues(alpha: 0.08),
@@ -175,7 +175,7 @@ class _GuideStep extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: AppTheme.surfaceDarkCard,
+        color: AppTheme.surfaceLightCard,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
           color: color.withValues(alpha: 0.2),

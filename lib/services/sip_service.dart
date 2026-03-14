@@ -111,13 +111,16 @@ class SipService extends ChangeNotifier {
 
   void _onCallTerminated(int callId, int statusCode) {
     debugPrint('[SipService] Call terminated callId: $callId status: $statusCode');
+    // Immediately set to ended so UI can pop
     _callState = CallState.ended;
     _activeCallId = -1;
-    Future.delayed(const Duration(seconds: 2), () {
-      _callState = CallState.idle;
-      notifyListeners();
-    });
     notifyListeners();
+    
+    // Reset to idle after a short delay so the next call can come through
+    Future.delayed(const Duration(milliseconds: 500), () {
+      _callState = CallState.idle;
+      if (hasListeners) notifyListeners();
+    });
   }
 
   Future<bool> registerAccount({
@@ -210,6 +213,13 @@ class SipService extends ChangeNotifier {
         }
       },
     );
+  }
+
+  void abortReconnect() {
+    _reconnectTimer?.cancel();
+    _connectionState = SipConnectionState.disconnected;
+    _statusMessage = 'Disconnected';
+    notifyListeners();
   }
 
   // Call handling

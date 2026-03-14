@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
-import '../app_theme.dart';
+
 import '../app_router.dart';
+import '../app_theme.dart';
 import '../services/sip_service.dart';
 import '../services/storage_service.dart';
-import '../widgets/status_indicator.dart';
 import '../widgets/pulsing_dot.dart';
+import '../widgets/status_indicator.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -16,15 +18,20 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final SipService _sipService = SipService();
   String _gvNumber = '';
+  late SipService _sipService;
   bool _hasApiKey = false;
+  bool _isDialogShowing = false;
 
   @override
   void initState() {
     super.initState();
     _loadData();
-    _sipService.addListener(_onSipUpdate);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _sipService = Provider.of<SipService>(context, listen: false);
+      _sipService.addListener(_onSipUpdate);
+      // Auto-register SIP is handled in _loadData since it needs await
+    });
   }
 
   @override
@@ -35,39 +42,45 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _onSipUpdate() {
     setState(() {});
-    // Handle incoming call — show answer dialog
-    if (_sipService.callState == CallState.incoming) {
+    // Handle incoming call — show answer dialog only once
+    if (_sipService.callState == CallState.incoming && !_isDialogShowing) {
       _showIncomingCallDialog();
+    } else if (_sipService.callState != CallState.incoming && _isDialogShowing) {
+      // If call is cancelled or answered externally, dismiss dialog
+      if (mounted) Navigator.pop(context);
     }
   }
 
   void _showIncomingCallDialog() {
+    _isDialogShowing = true;
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.surfaceDarkElevated,
+        backgroundColor: AppTheme.surfaceLightElevated,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Text(
           '📞 Incoming Call',
-          style: TextStyle(color: AppTheme.textPrimary, fontSize: 20),
+          style: TextStyle(color: AppTheme.textPrimary, fontSize: 20, fontWeight: FontWeight.bold),
         ),
         content: Text(
           _sipService.callerNumber.isNotEmpty
               ? _sipService.callerNumber
               : 'Unknown Caller',
-          style: TextStyle(color: AppTheme.textSecondary, fontSize: 16),
+          style: const TextStyle(color: AppTheme.textSecondary, fontSize: 16),
         ),
         actions: [
           TextButton(
             onPressed: () async {
+              _isDialogShowing = false;
               await _sipService.rejectCall();
               if (ctx.mounted) Navigator.pop(ctx);
             },
-            child: Text('Decline', style: TextStyle(color: AppTheme.accentRed, fontSize: 16)),
+            child: const Text('Decline', style: TextStyle(color: AppTheme.accentRed, fontSize: 16, fontWeight: FontWeight.bold)),
           ),
           ElevatedButton(
             onPressed: () async {
+              _isDialogShowing = false;
               await _sipService.answerCall();
               if (ctx.mounted) Navigator.pop(ctx);
               if (mounted) {
@@ -79,7 +92,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-    );
+    ).then((_) => _isDialogShowing = false);
   }
 
   Future<void> _loadData() async {
@@ -96,21 +109,17 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: ShaderMask(
-          shaderCallback: (bounds) =>
-              AppTheme.primaryGradient.createShader(bounds),
-          child: const Text(
-            'StealthAnswer',
-            style: TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.w800,
-              color: Colors.white,
-            ),
+        title: const Text(
+          'StealthAnswer',
+          style: TextStyle(
+            fontSize: 22,
+            fontWeight: FontWeight.w800,
+            color: AppTheme.primary,
           ),
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.settings_outlined, size: 24),
+            icon: const Icon(Icons.settings_outlined, size: 24, color: AppTheme.textSecondary),
             onPressed: () async {
               await Navigator.pushNamed(context, AppRouter.settings);
               _loadData(); // Reload data after settings
@@ -124,6 +133,10 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // Active Call Banner
+              if (_sipService.callState == CallState.active)
+                _buildActiveCallBanner(),
+
               // Interview Number Card
               _buildPhoneNumberCard(),
               const SizedBox(height: 16),
@@ -139,7 +152,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       const SizedBox(height: 8),
                       Text(
                         'sip: ${_sipService.sipAddress}',
-                        style: TextStyle(
+                        style: const TextStyle(
                           fontSize: 13,
                           color: AppTheme.textMuted,
                           fontFamily: 'monospace',
@@ -159,17 +172,18 @@ class _HomeScreenState extends State<HomeScreen> {
                   children: [
                     Row(
                       children: [
-                        Icon(
+                        const Icon(
                           Icons.check_circle,
                           color: AppTheme.accentGreen,
                           size: 18,
                         ),
                         const SizedBox(width: 8),
-                        Text(
-                          'Moonshine STT (on-device)',
+                        const Text(
+                          'Gemini WebSocket (Live)',
                           style: TextStyle(
                             fontSize: 14,
                             color: AppTheme.accentGreen,
+                            fontWeight: FontWeight.w500,
                           ),
                         ),
                       ],
@@ -186,12 +200,13 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                         const SizedBox(width: 8),
                         Text(
-                          'Gemini Live ${_hasApiKey ? "connected" : "API key needed"}',
+                          'Gemini Fast Text ${_hasApiKey ? "Ready" : "Key Needed"}',
                           style: TextStyle(
                             fontSize: 14,
                             color: _hasApiKey
                                 ? AppTheme.accentGreen
                                 : AppTheme.textMuted,
+                            fontWeight: FontWeight.w500,
                           ),
                         ),
                       ],
@@ -209,7 +224,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           style: OutlinedButton.styleFrom(
                             foregroundColor: AppTheme.primary,
                             side: BorderSide(
-                              color: AppTheme.primary.withValues(alpha: 0.5),
+                              color: AppTheme.primary.withOpacity(0.5),
                             ),
                           ),
                         ),
@@ -228,11 +243,12 @@ class _HomeScreenState extends State<HomeScreen> {
                     Navigator.pushNamed(context, AppRouter.resume);
                   },
                   icon: const Icon(Icons.edit_note, size: 20),
-                  label: const Text('Edit Resume'),
+                  label: const Text('Edit Resume Context'),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: AppTheme.textSecondary,
-                    side: BorderSide(
-                      color: Colors.white.withValues(alpha: 0.1),
+                    side: const BorderSide(
+                      color: AppTheme.textMuted,
+                      width: 1,
                     ),
                     padding: const EdgeInsets.symmetric(vertical: 16),
                   ),
@@ -258,7 +274,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               SipConnectionState.connected
                           ? 'Waiting for call...'
                           : 'Connect SIP to receive calls',
-                      style: TextStyle(
+                      style: const TextStyle(
                         fontSize: 17,
                         color: AppTheme.textSecondary,
                         fontWeight: FontWeight.w500,
@@ -267,27 +283,43 @@ class _HomeScreenState extends State<HomeScreen> {
                   ],
                 ),
               ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
-              const SizedBox(height: 32),
-
-              // Demo button (for testing)
-              Center(
-                child: TextButton.icon(
-                  onPressed: () {
-                    Navigator.pushNamed(context, AppRouter.activeCall);
-                  },
-                  icon: Icon(Icons.play_circle_outline,
-                      size: 18, color: AppTheme.textMuted),
-                  label: Text(
-                    'Demo Active Call',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: AppTheme.textMuted,
-                    ),
+  Widget _buildActiveCallBanner() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 20),
+      child: Material(
+        color: AppTheme.accentGreen.withOpacity(0.1),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: AppTheme.accentGreen, width: 2),
+        ),
+        child: InkWell(
+          onTap: () => Navigator.pushNamed(context, AppRouter.activeCall),
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+            child: Row(
+              children: [
+                const PulsingDot(size: 16, color: AppTheme.accentGreen),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Call in Progress', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textPrimary)),
+                      Text('Tap to return to chat', style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+                    ],
                   ),
                 ),
-              ),
-            ],
+                const Icon(Icons.arrow_forward_ios, size: 16, color: AppTheme.accentGreen),
+              ],
+            ),
           ),
         ),
       ),
@@ -298,23 +330,16 @@ class _HomeScreenState extends State<HomeScreen> {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            AppTheme.primary.withValues(alpha: 0.15),
-            AppTheme.accent.withValues(alpha: 0.08),
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
+        color: AppTheme.surfaceLightElevated,
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
-          color: AppTheme.primary.withValues(alpha: 0.2),
+          color: AppTheme.primary.withOpacity(0.2),
         ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
+          const Text(
             'Your Interview Number',
             style: TextStyle(
               fontSize: 13,
@@ -348,7 +373,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
                           content: const Text('Number copied!'),
-                          backgroundColor: AppTheme.surfaceDarkElevated,
+                          backgroundColor: AppTheme.textPrimary,
                           behavior: SnackBarBehavior.floating,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(10),
@@ -383,10 +408,17 @@ class _HomeScreenState extends State<HomeScreen> {
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppTheme.surfaceDarkCard,
+        color: AppTheme.surfaceLightCard,
         borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
         border: Border.all(
-          color: Colors.white.withValues(alpha: 0.06),
+          color: Colors.black.withOpacity(0.05),
         ),
       ),
       child: Column(
@@ -394,10 +426,10 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           Text(
             title,
-            style: TextStyle(
+            style: const TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w600,
-              color: AppTheme.textMuted,
+              color: AppTheme.textSecondary,
               letterSpacing: 0.5,
             ),
           ),
@@ -415,7 +447,22 @@ class _HomeScreenState extends State<HomeScreen> {
       case SipConnectionState.connecting:
         return StatusIndicator.connecting('Connecting...');
       case SipConnectionState.reconnecting:
-        return StatusIndicator.connecting('Reconnecting...');
+        return Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            StatusIndicator.connecting('Reconnecting...'),
+            TextButton(
+              onPressed: () => _sipService.abortReconnect(),
+              style: TextButton.styleFrom(
+                foregroundColor: AppTheme.accentRed,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: const Text('Cancel', style: TextStyle(fontSize: 13)),
+            )
+          ],
+        );
       case SipConnectionState.error:
         return StatusIndicator.disconnected(_sipService.statusMessage);
       case SipConnectionState.disconnected:
@@ -445,20 +492,20 @@ class _ActionButton extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 10),
           decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.06),
+            color: AppTheme.primary.withOpacity(0.08),
             borderRadius: BorderRadius.circular(10),
           ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, size: 16, color: AppTheme.textSecondary),
+              Icon(icon, size: 16, color: AppTheme.primary),
               const SizedBox(width: 6),
               Text(
                 label,
                 style: const TextStyle(
                   fontSize: 14,
-                  color: AppTheme.textSecondary,
-                  fontWeight: FontWeight.w500,
+                  color: AppTheme.primary,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
             ],

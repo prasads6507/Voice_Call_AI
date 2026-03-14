@@ -159,7 +159,7 @@ class _SipCredentialsScreenState extends State<SipCredentialsScreen> {
                   width: double.infinity,
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    color: AppTheme.surfaceDarkElevated,
+                    color: AppTheme.surfaceLightElevated,
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(
                       color: AppTheme.primary.withValues(alpha: 0.3),

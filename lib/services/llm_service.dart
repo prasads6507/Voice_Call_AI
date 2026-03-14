@@ -7,22 +7,36 @@ import 'storage_service.dart';
 
 enum LlmState { unloaded, connecting, ready, transcribing, generating, error }
 
-/// ══════════════════════════════════════════════════════════════════
-///  GEMINI LIVE  — confirmed working config as of March 2026
-/// ══════════════════════════════════════════════════════════════════
+/// ═══════════════════════════════════════════════════════════════════
+///  THE BUG — confirmed by the on-screen error message:
 ///
-///  ENDPOINT  : v1beta  (official docs URL — NOT v1alpha)
-///              v1alpha only needed for experimental features like
-///              affective dialog; the 09-2025 model throws 1008 on
-///              v1alpha with "model not found for this API version"
+///  "Unknown name "inputAudioTranscription" at
+///   'setup.generation_config': Cannot find field."
 ///
-///  LIVE MODEL: gemini-2.5-flash-native-audio-preview-12-2025
-///              (09-2025 model is deprecated, removed March 19 2026)
+///  inputAudioTranscription is a field of BidiGenerateContentSetup,
+///  NOT a field of GenerationConfig. It must sit at the TOP LEVEL of
+///  the "setup" object, alongside "generationConfig" — not inside it.
 ///
-///  STRATEGY  : Same two-step as Cheating Daddy
-///    Step 1 — Gemini Live WS → inputAudioTranscription events
-///    Step 2 — Gemini HTTP generateContentStream → coaching answer
-/// ══════════════════════════════════════════════════════════════════
+///  ❌ WRONG (what we were sending every time):
+///  {
+///    "setup": {
+///      "generationConfig": {
+///        "responseModalities": ["AUDIO"],
+///        "inputAudioTranscription": {}   ← WRONG nesting level
+///      }
+///    }
+///  }
+///
+///  ✅ CORRECT (this is the fix):
+///  {
+///    "setup": {
+///      "generationConfig": {
+///        "responseModalities": ["AUDIO"]
+///      },
+///      "inputAudioTranscription": {}     ← TOP level of setup
+///    }
+///  }
+/// ═══════════════════════════════════════════════════════════════════
 class LlmService extends ChangeNotifier {
   LlmState _state = LlmState.unloaded;
   String _error = '';
@@ -36,31 +50,27 @@ class LlmService extends ChangeNotifier {
   int _reconnects = 0;
   static const _maxReconnects = 3;
 
-  String _turnText = ''; // accumulates caller speech this turn
-  final List<Map<String, String>> _history = []; // last 10 Q&A
+  String _turnText = '';
+  final List<Map<String, String>> _history = [];
 
   // ── Callbacks ──────────────────────────────────────────────────
   Function(String)? onCallerSpeechUpdate;
   Function(String)? onAIAnswerStreaming;
   Function(String, String)? onTurnComplete;
-  Function(String)? onQuestionComplete; // legacy compat
+  Function(String)? onQuestionComplete;
 
   // ── API constants ──────────────────────────────────────────────
-  //
-  // ✅ CORRECT: v1beta  — this is what Google's official docs show
-  // ❌ WRONG:   v1alpha — causes 1008 "model not found" for native audio models
   static const _wsUrl =
       'wss://generativelanguage.googleapis.com/ws/'
       'google.ai.generativelanguage.v1beta'
       '.GenerativeService.BidiGenerateContent';
 
-  // ✅ 12-2025 model — current, works on v1beta
-  // ❌ 09-2025 model — deprecated, throws 1008 on v1alpha, removed March 19 2026
-  static const _liveModel = 'gemini-2.5-flash-native-audio-preview-12-2025';
+  static const _liveModel =
+      'gemini-2.5-flash-native-audio-preview-12-2025';
 
-  // Fast text model for coaching answers
   static const _answerModel = 'gemini-2.0-flash-lite';
-  static const _httpBase = 'https://generativelanguage.googleapis.com/v1beta/models';
+  static const _httpBase =
+      'https://generativelanguage.googleapis.com/v1beta/models';
 
   // ── Getters ────────────────────────────────────────────────────
   LlmState get state => _state;
@@ -88,12 +98,39 @@ class LlmService extends ChangeNotifier {
 
     _apiKey = await StorageService.getGeminiApiKey();
     if (_apiKey.isEmpty) {
-      _fail('No Gemini API key found. Go to Settings → Add API Key.');
+      _fail('No Gemini API key found.\nGo to Settings → Add API Key.');
+      return false;
+    }
+    debugPrint('[LLM] Key loaded (${_apiKey.length} chars). Running preflight…');
+
+    // Verify key before WebSocket attempt
+    final preflightError = await _checkApiKey();
+    if (preflightError != null) {
+      _fail(preflightError);
       return false;
     }
 
-    debugPrint('[LLM] API key loaded (${_apiKey.length} chars). Connecting…');
     return _connect();
+  }
+
+  Future<String?> _checkApiKey() async {
+    try {
+      final resp = await http
+          .get(Uri.parse('$_httpBase?key=$_apiKey'))
+          .timeout(const Duration(seconds: 10));
+      if (resp.statusCode == 200) return null;
+      try {
+        final body = jsonDecode(resp.body) as Map<String, dynamic>;
+        final msg = body['error']?['message'] as String? ?? resp.body;
+        return 'API key error (${resp.statusCode}): $msg';
+      } catch (_) {
+        return 'API key error: HTTP ${resp.statusCode}';
+      }
+    } on TimeoutException {
+      return 'Network timeout. Check your internet connection.';
+    } catch (e) {
+      return 'Network error: $e';
+    }
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -103,49 +140,58 @@ class LlmService extends ChangeNotifier {
   Future<bool> _connect() async {
     try {
       final uri = Uri.parse('$_wsUrl?key=$_apiKey');
-      debugPrint('[LLM] Connecting to: $_wsUrl');
+      debugPrint('[LLM] WS connecting…');
       _ws = WebSocketChannel.connect(uri);
       await _ws!.ready;
-      debugPrint('[LLM] ✓ WS open. Sending setup…');
+      debugPrint('[LLM] WS open. Sending setup…');
       _sendSetup();
       _wsSub = _ws!.stream.listen(_onMsg, onError: _onWsErr, onDone: _onWsDone);
       return true;
     } catch (e) {
-      _fail('WebSocket failed: $e\nCheck your internet connection and API key.');
+      _fail('WebSocket failed: $e');
       return false;
     }
   }
 
-  // ──────────────────────────────────────────────────────────────
-  //  SETUP MESSAGE
+  // ══════════════════════════════════════════════════════════════
+  //  SETUP — THE FIX IS HERE
   //
-  //  Key points confirmed by official Google docs (March 2026):
-  //  • responseModalities: ["AUDIO"] — required for native audio pipeline
-  //  • inputAudioTranscription: {}   — enables transcription events
-  //  • All keys camelCase            — snake_case silently ignored
-  // ──────────────────────────────────────────────────────────────
+  //  BidiGenerateContentSetup proto fields:
+  //    setup.model                   ← model name
+  //    setup.generationConfig        ← GenerationConfig (responseModalities etc)
+  //    setup.systemInstruction       ← system prompt
+  //    setup.inputAudioTranscription ← AudioTranscriptionConfig (TOP LEVEL)
+  //    setup.outputAudioTranscription← AudioTranscriptionConfig (TOP LEVEL)
+  //    setup.tools                   ← tools array
+  //
+  //  inputAudioTranscription is NOT inside generationConfig.
+  //  It is a sibling of generationConfig under setup.
+  // ══════════════════════════════════════════════════════════════
   void _sendSetup() {
     final msg = jsonEncode({
       'setup': {
         'model': 'models/$_liveModel',
+
+        // GenerationConfig — only contains response modalities
         'generationConfig': {
           'responseModalities': ['AUDIO'],
-          'inputAudioTranscription': {
-            'enableSpeakerDiarization': true,
-            'minSpeakerCount': 2,
-            'maxSpeakerCount': 2,
-          },
         },
+
+        // ✅ TOP LEVEL of setup — NOT inside generationConfig
+        'inputAudioTranscription': {},
+
         'systemInstruction': {
           'parts': [
             {
-              'text': 'You are a silent listener. Do not respond. '
-                  'Just process the audio input for transcription.'
+              'text': 'You are a silent listener. '
+                  'Do not generate any responses. '
+                  'Just transcribe the audio input.'
             }
           ]
         },
       }
     });
+
     _ws?.sink.add(msg);
     debugPrint('[LLM] Setup sent. Waiting for setupComplete…');
   }
@@ -172,13 +218,14 @@ class LlmService extends ChangeNotifier {
   void _onMsg(dynamic raw) {
     try {
       final data = jsonDecode(raw as String) as Map<String, dynamic>;
+      debugPrint('[LLM] ← ${raw.toString().substring(0, raw.toString().length.clamp(0, 120))}');
 
-      // ── Session ready ──────────────────────────────────────────
+      // Session ready
       if (data.containsKey('setupComplete')) {
         _sessionReady = true;
         _reconnects = 0;
         _state = LlmState.ready;
-        debugPrint('[LLM] ✅ setupComplete — session ready!');
+        debugPrint('[LLM] ✅ Session ready! Audio streaming live.');
         notifyListeners();
         return;
       }
@@ -186,35 +233,22 @@ class LlmService extends ChangeNotifier {
       final sc = data['serverContent'] as Map<String, dynamic>?;
       if (sc == null) return;
 
-      // ── Input transcription (caller speech) ───────────────────
-      //
-      // With diarization ON, path is:
-      //   serverContent.inputTranscription.results[].transcript
-      //   serverContent.inputTranscription.results[].speakerId
-      //
-      // Without diarization, path is:
-      //   serverContent.inputTranscription.text  (plain string)
-      //
+      // ── Caller speech transcription ───────────────────────────
       final inputTx = sc['inputTranscription'] as Map<String, dynamic>?;
       if (inputTx != null) {
         String chunk = '';
 
-        // Path 1 — diarized results
-        final results = inputTx['results'] as List<dynamic>?;
-        if (results != null && results.isNotEmpty) {
-          for (final r in results) {
-            final m = r as Map<String, dynamic>;
-            final t = m['transcript'] as String? ?? '';
-            if (t.trim().isEmpty) continue;
-            final sid = m['speakerId'] as int?;
-            chunk += '[${sid == 1 ? "Interviewer" : "Candidate"}]: $t\n';
-          }
-        }
+        // Plain text (standard path with empty inputAudioTranscription config)
+        final txt = inputTx['text'] as String? ?? '';
+        if (txt.trim().isNotEmpty) chunk = txt;
 
-        // Path 2 — plain text fallback
+        // Parts array fallback
         if (chunk.isEmpty) {
-          final t = inputTx['text'] as String? ?? '';
-          if (t.trim().isNotEmpty) chunk = t;
+          final parts = inputTx['parts'] as List<dynamic>?;
+          for (final p in parts ?? []) {
+            final t = (p as Map<String, dynamic>)['text'] as String?;
+            if (t != null && t.trim().isNotEmpty) chunk += t;
+          }
         }
 
         if (chunk.isNotEmpty) {
@@ -226,12 +260,11 @@ class LlmService extends ChangeNotifier {
         }
       }
 
-      // ── generationComplete = AI done processing audio turn ────
-      // This is the trigger to generate the coaching answer.
+      // ── generationComplete → generate coaching answer ─────────
       if (sc['generationComplete'] == true) {
         final question = _turnText.trim();
         _turnText = '';
-        debugPrint('[LLM] ⚡ generationComplete. Question: "$question"');
+        debugPrint('[LLM] ⚡ generationComplete → "$question"');
         if (question.isNotEmpty) {
           _state = LlmState.generating;
           notifyListeners();
@@ -245,19 +278,18 @@ class LlmService extends ChangeNotifier {
         notifyListeners();
       }
     } catch (e, st) {
-      debugPrint('[LLM] Parse error: $e\n$st');
+      debugPrint('[LLM] onMsg error: $e\n$st');
     }
   }
 
   // ══════════════════════════════════════════════════════════════
-  //  STEP 2 — GENERATE COACHING ANSWER (Gemini HTTP)
+  //  STEP 2 — COACHING ANSWER (Gemini HTTP stream)
   // ══════════════════════════════════════════════════════════════
 
   Future<void> _generateAnswer(String question) async {
     final url = Uri.parse(
         '$_httpBase/$_answerModel:streamGenerateContent?key=$_apiKey&alt=sse');
 
-    // Build context from recent history
     final ctx = <Map<String, dynamic>>[];
     for (final t in _history.take(8)) {
       ctx
@@ -269,18 +301,11 @@ class LlmService extends ChangeNotifier {
       'system_instruction': {
         'parts': [
           {
-            'text': '''You are a stealth real-time interview coach.
-The candidate is on a live phone interview RIGHT NOW and needs help.
-
-When given what the interviewer said, produce a suggested answer the candidate can say.
-
-FORMAT — output ONLY this, nothing else:
-💡 [2-3 sentence natural answer]
-
-Rules: Natural speech, under 60 words, draw from resume when relevant, no preamble.
-
-Candidate resume:
-$_resumeText'''
+            'text': 'You are a stealth real-time interview coach.\n'
+                'The candidate is on a live phone interview right now.\n'
+                'Given what the interviewer said, provide a short suggested answer.\n'
+                'FORMAT: Start with 💡 then 2-3 natural sentences. Under 60 words. No preamble.\n'
+                'Resume:\n$_resumeText'
           }
         ]
       },
@@ -301,11 +326,8 @@ $_resumeText'''
 
       if (resp.statusCode != 200) {
         final err = await resp.stream.bytesToString();
-        debugPrint('[LLM] HTTP ${resp.statusCode}: $err');
-        // Don't crash — just show the error and stay ready
-        _state = LlmState.error;
-        _error = 'Answer API error ${resp.statusCode}. '
-            'Check API key has Gemini API access.';
+        debugPrint('[LLM] Answer HTTP ${resp.statusCode}: $err');
+        _state = LlmState.ready;
         notifyListeners();
         return;
       }
@@ -337,46 +359,51 @@ $_resumeText'''
         onTurnComplete?.call(question, full.trim());
         onQuestionComplete?.call(question);
       }
-
       _state = LlmState.ready;
       notifyListeners();
     } catch (e) {
-      debugPrint('[LLM] HTTP error: $e');
-      _state = LlmState.ready; // recover, don't get stuck
+      debugPrint('[LLM] Answer error: $e');
+      _state = LlmState.ready;
       notifyListeners();
     }
   }
 
   // ══════════════════════════════════════════════════════════════
-  //  WS ERROR / CLOSE + AUTO RECONNECT
+  //  WS ERROR / CLOSE
   // ══════════════════════════════════════════════════════════════
 
   void _onWsErr(dynamic e) {
     debugPrint('[LLM] WS error: $e');
-    _fail('Connection error: $e');
+    _fail('$e');
   }
 
   void _onWsDone() {
-    final closeCode = _ws?.closeCode;
-    final closeReason = _ws?.closeReason;
-    debugPrint('[LLM] WS closed. code=$closeCode reason=$closeReason '
-        'userClosed=$_closedByUser reconnects=$_reconnects/$_maxReconnects');
+    final code = _ws?.closeCode;
+    final reason = _ws?.closeReason;
+    debugPrint('[LLM] WS closed. code=$code reason=$reason');
     _sessionReady = false;
+
     if (_closedByUser) {
       _state = LlmState.unloaded;
       notifyListeners();
       return;
     }
+
     if (_reconnects < _maxReconnects) {
       _reconnects++;
       _state = LlmState.connecting;
-      debugPrint('[LLM] Reconnecting $_reconnects/$_maxReconnects in 2s…');
+      debugPrint('[LLM] Reconnecting $_reconnects/$_maxReconnects…');
       notifyListeners();
       Future.delayed(const Duration(seconds: 2), () {
         if (!_closedByUser) _connect();
       });
     } else {
-      _fail('Lost connection after $_maxReconnects retries. End call and try again.');
+      String closeInfo = code != null ? ' (code $code${reason != null ? ": $reason" : ""})' : '';
+      _fail('Connection failed$closeInfo.\n\n'
+          'Check:\n'
+          '• API key is valid (Settings → API Key)\n'
+          '• Internet connection is stable\n'
+          '• AI Studio key has Gemini API enabled');
     }
   }
 

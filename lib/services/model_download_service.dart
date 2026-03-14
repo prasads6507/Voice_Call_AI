@@ -17,7 +17,7 @@ class ModelDownloadService extends ChangeNotifier {
   static const String whisperUrl =
       'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin';
   static const String gemmaUrl =
-      'https://huggingface.co/bartowski/gemma-3-1b-it-GGUF/resolve/main/gemma-3-1b-it-Q4_K_M.gguf';
+      'https://huggingface.co/lmstudio-community/gemma-3-1b-it-GGUF/resolve/main/gemma-3-1b-it-Q4_K_M.gguf';
 
   static const int whisperExpectedSize = 75 * 1024 * 1024; // ~75MB
   static const int gemmaExpectedSize = 800 * 1024 * 1024; // ~800MB

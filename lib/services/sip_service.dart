@@ -55,7 +55,7 @@ class SipService extends ChangeNotifier {
       iniData.license = ''; // Free/trial mode
       iniData.logLevelFile = LogLevel.none;
       iniData.logLevelIde = LogLevel.info;
-      iniData.enableVideoCall = false;
+      // iniData.enableVideoCall = false; // Bypassing due to missing native method in v1.0.34
       iniData.singleCallMode = true;
 
       await _sdk.initialize(iniData);

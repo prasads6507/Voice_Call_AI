@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../app_theme.dart';
 import '../../app_router.dart';
 import '../../services/storage_service.dart';
@@ -306,7 +307,7 @@ class _SipCredentialsScreenState extends State<SipCredentialsScreen> {
     });
 
     try {
-      final sipService = SipService();
+      final sipService = Provider.of<SipService>(context, listen: false);
       await sipService.initialize();
       final success = await sipService.registerAccount(
         username: _usernameController.text.trim(),

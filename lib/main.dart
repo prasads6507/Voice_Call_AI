@@ -1,0 +1,73 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
+import 'app_theme.dart';
+import 'app_router.dart';
+import 'services/sip_service.dart';
+import 'services/stt_service.dart';
+import 'services/llm_service.dart';
+import 'services/model_download_service.dart';
+import 'services/storage_service.dart';
+import 'providers/call_provider.dart';
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // Set preferred orientations
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+    DeviceOrientation.portraitDown,
+  ]);
+
+  // Set system UI overlay style for dark theme
+  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+    statusBarColor: Colors.transparent,
+    statusBarIconBrightness: Brightness.light,
+    systemNavigationBarColor: AppTheme.bgDark,
+    systemNavigationBarIconBrightness: Brightness.light,
+  ));
+
+  // Determine initial route
+  final isOnboarded = await StorageService.isOnboardingComplete();
+  String initialRoute;
+  if (!isOnboarded) {
+    initialRoute = AppRouter.welcome;
+  } else {
+    // Check if models are downloaded
+    final whisperReady = await StorageService.whisperModelExists();
+    final gemmaReady = await StorageService.gemmaModelExists();
+    if (!whisperReady || !gemmaReady) {
+      initialRoute = AppRouter.modelDownload;
+    } else {
+      initialRoute = AppRouter.home;
+    }
+  }
+
+  runApp(StealthAnswerApp(initialRoute: initialRoute));
+}
+
+class StealthAnswerApp extends StatelessWidget {
+  final String initialRoute;
+
+  const StealthAnswerApp({super.key, required this.initialRoute});
+
+  @override
+  Widget build(BuildContext context) {
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => SipService()),
+        ChangeNotifierProvider(create: (_) => SttService()),
+        ChangeNotifierProvider(create: (_) => LlmService()),
+        ChangeNotifierProvider(create: (_) => ModelDownloadService()),
+        ChangeNotifierProvider(create: (_) => CallProvider()),
+      ],
+      child: MaterialApp(
+        title: 'StealthAnswer',
+        debugShowCheckedModeBanner: false,
+        theme: AppTheme.darkTheme,
+        initialRoute: initialRoute,
+        onGenerateRoute: AppRouter.generateRoute,
+      ),
+    );
+  }
+}

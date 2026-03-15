@@ -259,7 +259,7 @@ class LlmService extends ChangeNotifier {
       }
 
       if (extractedText.isNotEmpty) {
-        _liveDraft = extractedText;
+        _liveDraft = _mergeTranscript(_liveDraft, extractedText);
         if (_state != LlmState.generating) {
           _state = LlmState.transcribing;
         }
@@ -284,6 +284,13 @@ class LlmService extends ChangeNotifier {
     } catch (e, st) {
       debugPrint('[LLM] onMsg error: $e\n$st');
     }
+  }
+
+  String _mergeTranscript(String existing, String incoming) {
+    if (existing.isEmpty) return incoming;
+    if (incoming.startsWith(existing)) return incoming;
+    if (existing.endsWith(incoming)) return existing;
+    return '$existing $incoming'.replaceAll(RegExp(r'\s+'), ' ').trim();
   }
 
   void _restartSilenceTimer() {

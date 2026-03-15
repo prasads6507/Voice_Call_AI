@@ -400,10 +400,10 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
         decoration: BoxDecoration(
           color: bg,
           borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(16),
-            topRight: const Radius.circular(16),
-            bottomLeft: isCaller ? Radius.zero : const Radius.circular(16),
-            bottomRight: isCaller ? const Radius.circular(16) : Radius.zero,
+            topLeft: const Radius.circular(18),
+            topRight: const Radius.circular(18),
+            bottomLeft: isCaller ? Radius.zero : const Radius.circular(18),
+            bottomRight: isCaller ? const Radius.circular(18) : Radius.zero,
           ),
           boxShadow: [
             BoxShadow(
@@ -414,7 +414,7 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
           ],
         ),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.end, 
+          crossAxisAlignment: isCaller ? CrossAxisAlignment.start : CrossAxisAlignment.end, 
           mainAxisSize: MainAxisSize.min, 
           children: [
             Row(

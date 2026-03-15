@@ -88,6 +88,7 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
       var attempts = 0;
       while (mounted &&
           _llm!.state != LlmState.ready &&
+          _llm!.state != LlmState.error &&
           attempts < 100) {
         await Future.delayed(const Duration(milliseconds: 100));
         attempts++;
@@ -100,7 +101,7 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
         return;
       }
 
-      debugPrint('[ActiveCall] LLM is ready. Starting audio tunnel…');
+      debugPrint('[ActiveCall] LLM is ready. Starting audio tunnel (Microphone)…');
       await _audio.startTunnel((chunk) {
         _llm?.sendAudioChunk(chunk);
       });
@@ -243,7 +244,7 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
     switch (s) {
       case LlmState.error:
         badgeColor = AppTheme.accentRed;
-        badgeLabel = 'Error';
+        badgeLabel = _llm?.errorMessage ?? 'Error';
         spin = false;
       case LlmState.generating:
         badgeColor = AppTheme.primary;
@@ -343,6 +344,19 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
                 const SizedBox(width: 8),
                 Text('Connecting AI…', style: TextStyle(fontSize: 13, color: AppTheme.textMuted.withOpacity(0.8))),
               ]),
+            if (s == LlmState.error) ...[
+              const SizedBox(height: 16),
+              Text(
+                'Full Error: ${_llm?.errorMessage ?? "Unknown"}',
+                style: const TextStyle(fontSize: 12, color: AppTheme.accentRed),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 12),
+              ElevatedButton(
+                onPressed: _retryConnection,
+                child: const Text('Try Reconnecting'),
+              ),
+            ],
           ]),
         ),
       );

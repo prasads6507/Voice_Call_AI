@@ -42,10 +42,8 @@ class LlmService extends ChangeNotifier {
       'google.ai.generativelanguage.v1beta'
       '.GenerativeService.BidiGenerateContent';
 
-  static const _liveModel =
-      'gemini-2.5-flash-native-audio-preview-12-2025';
-
-  static const _answerModel = 'gemini-2.5-flash-lite';
+  static const _liveModel = 'gemini-2.0-flash-exp';
+  static const _answerModel = 'gemini-2.0-flash';
   static const _httpBase =
       'https://generativelanguage.googleapis.com/v1beta/models';
 
@@ -138,30 +136,20 @@ class LlmService extends ChangeNotifier {
   // ══════════════════════════════════════════════════════════════
   void _sendSetup() {
     _setupTimer?.cancel();
-    _setupTimer = Timer(const Duration(seconds: 8), () {
+    _setupTimer = Timer(const Duration(seconds: 15), () {
       if (!_sessionReady && _state == LlmState.connecting) {
-        debugPrint('[LLM] Setup timeout reached (8s)');
-        _fail('Gemini Live did not become ready. Check setup payload.');
+        debugPrint('[LLM] Setup timeout reached (15s)');
+        _fail('Setup Timeout. Check your API key and Internet.');
       }
     });
 
     final msg = jsonEncode({
       'setup': {
         'model': 'models/$_liveModel',
-        'generationConfig': {
-          'responseModalities': ['AUDIO'],
+        'generation_config': {
+          'response_modalities': ['AUDIO'],
         },
-        'inputAudioTranscription': {},
-        'systemInstruction': {
-          'parts': [
-            {
-              'text': 'You are a professional real-time interview assistant.\n'
-                  'Always transcribe the caller speech into English only.\n'
-                  'Even if the caller speaks Telugu or another language, output English only.\n'
-                  'Do not generate coaching answers here.'
-            }
-          ]
-        },
+        'input_audio_transcription': {},
       }
     });
 
@@ -182,10 +170,10 @@ class LlmService extends ChangeNotifier {
     try {
       final b64 = base64Encode(chunk);
       _ws!.sink.add(jsonEncode({
-        'realtimeInput': {
-          'mediaChunks': [
+        'realtime_input': {
+          'media_chunks': [
             {
-              'mimeType': 'audio/pcm;rate=16000',
+              'mime_type': 'audio/pcm;rate=16000',
               'data': b64,
             }
           ]
@@ -220,7 +208,8 @@ class LlmService extends ChangeNotifier {
         return;
       }
 
-      if (data.containsKey('setupComplete')) {
+      // ── Root-level fields (Multimodal Live API) ──────────────────
+      if (data.containsKey('setupComplete') || data.containsKey('setup_complete')) {
         _setupTimer?.cancel();
         _sessionReady = true;
         _reconnects = 0;
@@ -230,31 +219,46 @@ class LlmService extends ChangeNotifier {
         return;
       }
 
-      final sc = data['serverContent'] as Map<String, dynamic>?;
-      if (sc == null) return;
-
-      final inputTx = sc['inputTranscription'] as Map<String, dynamic>?;
-      if (inputTx != null) {
-        final text = _extractTranscriptText(inputTx);
+      // Check for transcription at the root level
+      final rootTranscript = (data['input_audio_transcription'] ?? data['inputAudioTranscription']) as Map<String, dynamic>?;
+      if (rootTranscript != null) {
+        final text = _extractTranscriptText(rootTranscript);
         if (text.isNotEmpty) {
-          _liveDraft = _mergeTranscript(_liveDraft, text);
-          if (_state != LlmState.generating) {
-            _state = LlmState.transcribing;
-          }
-          _questionFinalizedForCurrentTurn = false;
-          debugPrint('[LLM] 🎤 Caller Draft: "$_liveDraft"');
-          onCallerDraftUpdate?.call(_liveDraft);
-          _restartSilenceTimer();
-          notifyListeners();
+          _handleTranscriptUpdate(text);
+          return;
         }
       }
 
-      if (sc['generationComplete'] == true || sc['turnComplete'] == true) {
-        _finalizeQuestion('server-flag');
+      final sc = (data['serverContent'] ?? data['server_content']) as Map<String, dynamic>?;
+      if (sc != null) {
+        // Check for transcription inside serverContent (fallback)
+        final inputTx = (sc['input_audio_transcription'] ?? sc['inputAudioTranscription'] ?? sc['inputTranscription']) as Map<String, dynamic>?;
+        if (inputTx != null) {
+          final text = _extractTranscriptText(inputTx);
+          if (text.isNotEmpty) _handleTranscriptUpdate(text);
+        }
+
+        if (sc['generation_complete'] == true || sc['turn_complete'] == true || 
+            sc['generationComplete'] == true || sc['turnComplete'] == true) {
+          _finalizeQuestion('server-flag');
+        }
+        return;
       }
     } catch (e) {
       debugPrint('[LLM] onMsg parse error: $e');
     }
+  }
+
+  void _handleTranscriptUpdate(String text) {
+    _liveDraft = _mergeTranscript(_liveDraft, text);
+    if (_state != LlmState.generating) {
+      _state = LlmState.transcribing;
+    }
+    _questionFinalizedForCurrentTurn = false;
+    debugPrint('[LLM] 🎤 Caller Draft: "$_liveDraft"');
+    onCallerDraftUpdate?.call(_liveDraft);
+    _restartSilenceTimer();
+    notifyListeners();
   }
 
   String _mergeTranscript(String existing, String incoming) {
@@ -345,6 +349,18 @@ class LlmService extends ChangeNotifier {
     if (content != null) {
       final nested = _extractTranscriptText(content);
       if (nested.isNotEmpty) return nested;
+    }
+
+    // Handle nested serverContent structure if needed
+    final serverContent = node['serverContent'] as Map<String, dynamic>?;
+    if (serverContent != null) {
+      final nested = _extractTranscriptText(serverContent);
+      if (nested.isNotEmpty) return nested;
+    }
+
+    final transcript = node['transcript'] as String?;
+    if (transcript != null && transcript.trim().isNotEmpty) {
+      return transcript.trim();
     }
 
     return '';

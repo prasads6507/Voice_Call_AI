@@ -1,0 +1,244 @@
+Resolving dependencies...
+Downloading packages...
+  async 2.11.0 (2.13.0 available)
+  boolean_selector 2.1.1 (2.1.2 available)
+  characters 1.4.0 (1.4.1 available)
+  cross_file 0.3.4+2 (0.3.5+2 available)
+  ffi 2.1.3 (2.2.0 available)
+  flutter_lints 5.0.0 (6.0.0 available)
+  flutter_local_notifications 19.5.0 (21.0.0 available)
+  flutter_local_notifications_linux 6.0.0 (8.0.0 available)
+  flutter_local_notifications_platform_interface 9.1.0 (11.0.0 available)
+  flutter_local_notifications_windows 1.0.3 (3.0.0 available)
+  google_fonts 6.3.0 (8.0.2 available)
+  lints 5.1.1 (6.1.0 available)
+  matcher 0.12.17 (0.12.19 available)
+  material_color_utilities 0.11.1 (0.13.0 available)
+  meta 1.17.0 (1.18.1 available)
+  path_provider_android 2.2.17 (2.2.22 available)
+  path_provider_foundation 2.4.1 (2.6.0 available)
+  petitparser 6.0.2 (7.0.2 available)
+  shared_preferences 2.5.3 (2.5.4 available)
+  shared_preferences_android 2.4.11 (2.4.21 available)
+  shared_preferences_foundation 2.5.4 (2.5.6 available)
+  source_span 1.10.0 (1.10.2 available)
+  string_scanner 1.3.0 (1.4.1 available)
+  term_glyph 1.2.1 (1.2.2 available)
+  test_api 0.7.7 (0.7.10 available)
+  timezone 0.10.1 (0.11.0 available)
+  url_launcher_android 6.3.17 (6.3.28 available)
+  url_launcher_ios 6.3.3 (6.4.1 available)
+  url_launcher_linux 3.2.1 (3.2.2 available)
+  url_launcher_macos 3.2.2 (3.2.5 available)
+  url_launcher_web 2.4.1 (2.4.2 available)
+  url_launcher_windows 3.1.4 (3.1.5 available)
+  vm_service 14.3.0 (15.0.2 available)
+  wakelock_plus 1.4.0 (1.5.1 available)
+  wakelock_plus_platform_interface 1.3.0 (1.4.0 available)
+  win32 5.10.1 (6.0.0 available)
+  xml 6.5.0 (6.6.1 available)
+Got dependencies!
+37 packages have newer versions incompatible with dependency constraints.
+Try `flutter pub outdated` for more information.
+Launching lib/main.dart on SM S134DL in debug mode...
+Running Gradle task 'assembleDebug'...                              9.0s
+✓ Built build/app/outputs/flutter-apk/app-debug.apk
+Installing build/app/outputs/flutter-apk/app-debug.apk...           9.5s
+D/FlutterJNI( 9428): Beginning load of flutter...
+D/FlutterJNI( 9428): flutter (null) was loaded normally!
+I/flutter ( 9428): [IMPORTANT:flutter/shell/platform/android/android_context_vk_impeller.cc(62)] Using the Impeller rendering backend (Vulkan).
+I/flutter ( 9428): [IMPORTANT:flutter/shell/platform/android/android_context_gl_impeller.cc(104)] Using the Impeller rendering backend (OpenGLES).
+Syncing files to device SM S134DL...                               137ms
+
+Flutter run key commands.
+r Hot reload. 🔥🔥🔥
+R Hot restart.
+h List all available interactive commands.
+d Detach (terminate "flutter run" but leave application running).
+c Clear the screen
+q Quit (terminate the application on the device).
+
+A Dart VM Service on SM S134DL is available at: http://127.0.0.1:54153/L0y3XMsRQkw=/
+The Flutter DevTools debugger and profiler on SM S134DL is available at: http://127.0.0.1:54153/L0y3XMsRQkw=/devtools/?uri=ws://127.0.0.1:54153/L0y3XMsRQkw=/ws
+I/Choreographer( 9428): Skipped 58 frames!  The application may be doing too much work on its main thread.
+I/SurfaceView@4a9e828( 9428): onWindowVisibilityChanged(0) true io.flutter.embedding.android.FlutterSurfaceView{4a9e828 V.E...... ......I. 0,0-0,0} of ViewRootImpl@8a00eca[MainActivity]
+D/SurfaceView@4a9e828( 9428): updateSurface: has no frame
+I/.stealth_answer( 9428): Compiler allocated 6148KB to compile void android.view.ViewRootImpl.performTraversals()
+I/ViewRootImpl@8a00eca[MainActivity]( 9428): performTraversals params={(0,0)(fillxfill) sim={adjust=resize forwardNavigation} ty=BASE_APPLICATION wanim=0x1030001
+I/ViewRootImpl@8a00eca[MainActivity]( 9428):   fl=81810100
+I/ViewRootImpl@8a00eca[MainActivity]( 9428):   pfl=12020040
+I/ViewRootImpl@8a00eca[MainActivity]( 9428):   vsysui=500
+I/ViewRootImpl@8a00eca[MainActivity]( 9428):   bhv=DEFAULT
+I/ViewRootImpl@8a00eca[MainActivity]( 9428):   fitSides= naviIconColor=0}
+I/ViewRootImpl@8a00eca[MainActivity]( 9428): performTraversals mFirst=true windowShouldResize=true viewVisibilityChanged=false mForceNextWindowRelayout=false params={(0,0)(fillxfill) sim={adjust=resize forwardNavigation} ty=BASE_APPLICATION fmt=TRANSLUCENT wanim=0x1030001
+I/ViewRootImpl@8a00eca[MainActivity]( 9428):   fl=81810100
+I/ViewRootImpl@8a00eca[MainActivity]( 9428):   pfl=12020040
+I/ViewRootImpl@8a00eca[MainActivity]( 9428):   vsysui=500
+I/ViewRootImpl@8a00eca[MainActivity]( 9428):   bhv=DEFAULT
+I/ViewRootImpl@8a00eca[MainActivity]( 9428):   fitSides= naviIconColor=0}
+D/InsetsController( 9428): onStateChanged: InsetsState: {mDisplayFrame=Rect(0, 0 - 720, 1600), mDisplayCutout=DisplayCutout{insets=Rect(0, 45 - 0, 0) waterfall=Insets{left=0, top=0, right=0, bottom=0} boundingRect={Bounds=[Rect(0, 0 - 0, 0), Rect(272, 0 - 448, 45), Rect(0, 0 - 0, 0), Rect(0, 0 - 0, 0)]} cutoutPathParserInfo={CutoutPathParserInfo{displayWidth=720 displayHeight=1600 physicalDisplayWidth=720 physicalDisplayHeight=1600 density={1.75} cutoutSpec={M 0,0 H -88 V 45 H 88 V 0 H 0 Z} rotation={0} scale={1.0} physicalPixelDisplaySizeRatio={1.0}}}}, mRoundedCorners=RoundedCorners{[RoundedCorner{position=TopLeft, radius=56, center=Point(56, 56)}, RoundedCorner{position=TopRight, radius=56, center=Point(664, 56)}, RoundedCorner{position=BottomRight, radius=56, center=Point(664, 1544)}, RoundedCorner{position=BottomLeft, radius=56, center=Point(56, 1544)}]}  mRoundedCornerFrame=Rect(0, 0 - 720, 1600), mPrivacyIndicatorBounds=PrivacyIndicatorBounds {static bounds=Rect(643, 0 - 720, 45) rotation=0}, mSources= { InsetsSource: {mType=ITYPE_STATUS_BAR, mFrame=[0,0][720,45], mVisible=true, mInsetsRoundedCornerFrame=false}, InsetsSource: {mType=ITYPE_NAVIGATION_BAR, mFrame=[0,1574][720,1600], mVisible=true, mInsetsRoundedCornerFrame=false}, InsetsSource: {mType=ITYPE_LEFT_GESTURES, mFrame=[0,0][52,1600], mVisible=true, mInsetsRoundedCornerFrame=false}, InsetsSource: {mType=ITYPE_RIGHT_GESTURES, mFrame=[668,0][720,1600], mVisible=true, mInsetsRoundedCornerFrame=false}, InsetsSource: {mType=ITYPE_TOP_MANDATORY_GESTURES, mFrame=[0,0][720,66], mVisible=true, mInsetsRoundedCornerFrame=false}, InsetsSource: {mType=ITYPE_BOTTOM_MANDATORY_GESTURES, mFrame=[0,1544][720,1600], mVisible=true, mInsetsRoundedCornerFrame=false}, InsetsSource: {mType=ITYPE_LEFT_DISPLAY_CUTOUT, mFrame=[0,0][-100000,1600], mVisible=true, mInsetsRoundedCornerFrame=false}, InsetsSource: {mType=ITYPE_TOP_DISPLAY_CUTOUT, mFrame=[0,0][720,45], mVisible=true, mInsetsRoundedCornerFrame=false}, InsetsSource: {mType=ITYPE_RIGHT_DISPLAY_CUTOUT, mFrame=[100000,0][720,1600], mVisible=true, mInsetsRoundedCornerFrame=false}, InsetsSource: {mType=ITYPE_BOTTOM_DISPLAY_CUTOUT, mFrame=[0,100000][720,1600], mVisible=true, mInsetsRoundedCornerFrame=false}, InsetsSource: {mType=ITYPE_TOP_TAPPABLE_ELEMENT, mFrame=[0,0][720,45], mVisible=true, mInsetsRoundedCornerFrame=false}, InsetsSource: {mType=ITYPE_BOTTOM_TAPPABLE_ELEMENT, mFrame=[0,0][0,0], mVisible=true, mInsetsRoundedCornerFrame=false}, InsetsSource: {mType=ITYPE_IME, mFrame=[0,0][0,0], mVisibleFrame=[0,1516][720,1600], mVisible=false, mInsetsRoundedCornerFrame=false} } host=com.stealthanswer.stealth_answer/com.stealthanswer.stealth_answer.MainActivity from=android.view.ViewRootImpl.relayoutWindow:9802
+I/ViewRootImpl@8a00eca[MainActivity]( 9428): updateBlastSurfaceIfNeeded mBlastBufferQueue=null isSameSurfaceControl=false
+D/BufferQueueConsumer( 9428): [](id:24d400000000,api:0,p:-1,c:9428) connect: controlledByApp=false
+I/BLASTBufferQueue( 9428): new BLASTBufferQueue, mName= ViewRootImpl@8a00eca[MainActivity] mNativeObject= 0xb40000735df56300 sc.mNativeObject= 0xb40000735df51760 caller= android.view.ViewRootImpl.updateBlastSurfaceIfNeeded:2909 android.view.ViewRootImpl.relayoutWindow:9847 android.view.ViewRootImpl.performTraversals:3884 android.view.ViewRootImpl.doTraversal:3116 android.view.ViewRootImpl$TraversalRunnable.run:10885 android.view.Choreographer$CallbackRecord.run:1301 android.view.Choreographer$CallbackRecord.run:1309 android.view.Choreographer.doCallbacks:923 android.view.Choreographer.doFrame:852 android.view.Choreographer$FrameDisplayEventReceiver.run:1283 
+I/BLASTBufferQueue( 9428): update, w= 720 h= 1600 mName = ViewRootImpl@8a00eca[MainActivity] mNativeObject= 0xb40000735df56300 sc.mNativeObject= 0xb40000735df51760 format= -3 caller= android.graphics.BLASTBufferQueue.<init>:84 android.view.ViewRootImpl.updateBlastSurfaceIfNeeded:2909 android.view.ViewRootImpl.relayoutWindow:9847 android.view.ViewRootImpl.performTraversals:3884 android.view.ViewRootImpl.doTraversal:3116 android.view.ViewRootImpl$TraversalRunnable.run:10885 
+E/FBI     ( 9428): Can't load library: dlopen failed: library "libmagtsync.so" not found
+I/ViewRootImpl@8a00eca[MainActivity]( 9428): Relayout returned: old=(0,0,720,1600) new=(0,0,720,1600) req=(720,1600)0 dur=14 res=0x3 s={true 0xb4000072dc739000} ch=true seqId=0
+I/DecorView( 9428): getCurrentDensityDpi: from real metrics. densityDpi=280 msg=remove_caption
+I/DecorView( 9428): [INFO] isPopOver=false config=true
+I/DecorView( 9428): updateCaptionType: isFloating=false isApplication=true hasWindowDecorCaption=false this=DecorView@a3ef91f[MainActivity]
+D/DecorView( 9428): setCaptionType = 0, this = DecorView@a3ef91f[MainActivity]
+I/MSHandlerLifeCycle( 9428): removeMultiSplitHandler: no exist. decor=DecorView@a3ef91f[MainActivity]
+I/ViewRootImpl@8a00eca[MainActivity]( 9428): mThreadedRenderer.initialize() mSurface={isValid=true 0xb4000072dc739000} hwInitialized=true
+D/OpenGLRenderer( 9428): eglCreateWindowSurface
+D/SurfaceView@4a9e828( 9428): updateSurface: has no frame
+I/SurfaceView@4a9e828( 9428): windowStopped(false) true io.flutter.embedding.android.FlutterSurfaceView{4a9e828 V.E...... ......ID 0,0-720,1574} of ViewRootImpl@8a00eca[MainActivity]
+D/SurfaceView@4a9e828( 9428): updateSurface: has no frame
+I/ViewRootImpl@8a00eca[MainActivity]( 9428): reportNextDraw android.view.ViewRootImpl.performTraversals:4438 android.view.ViewRootImpl.doTraversal:3116 android.view.ViewRootImpl$TraversalRunnable.run:10885 android.view.Choreographer$CallbackRecord.run:1301 android.view.Choreographer$CallbackRecord.run:1309 
+I/SurfaceView@4a9e828( 9428): Changes: creating=true format=true size=true visible=true alpha=false hint=false mUseAlpha=false visible=true left=true top=true
+D/BufferQueueConsumer( 9428): [](id:24d400000001,api:0,p:-1,c:9428) connect: controlledByApp=false
+I/BLASTBufferQueue( 9428): update, w= 720 h= 1574 mName = null mNativeObject= 0xb40000735df56680 sc.mNativeObject= 0xb40000735df522a0 format= 4 caller= android.view.SurfaceView.createBlastSurfaceControls:1383 android.view.SurfaceView.updateSurface:1079 android.view.SurfaceView.lambda$new$0$android-view-SurfaceView:200 android.view.SurfaceView$$ExternalSyntheticLambda5.onPreDraw:2 android.view.ViewTreeObserver.dispatchOnPreDraw:1121 android.view.ViewRootImpl.performTraversals:4442 
+I/SurfaceView@4a9e828( 9428): 78243880 Cur surface: Surface(name=null)/@0xb1ca3cd
+I/SurfaceView@4a9e828( 9428): pST: sr = Rect(0, 0 - 720, 1574) sw = 720 sh = 1574
+D/SurfaceView@4a9e828( 9428): performSurfaceTransaction RenderWorker position = [0, 0, 720, 1574] surfaceSize = 720x1574
+I/SurfaceView@4a9e828( 9428): applyTransactionOnVriDraw: vri = ViewRootImpl@8a00eca[MainActivity] fRS = false t = 0xb400007358f16c00 android.view.SurfaceView.performSurfaceTransaction:959 android.view.SurfaceView.updateSurface:1105 android.view.SurfaceView.lambda$new$0$android-view-SurfaceView:200 
+I/ViewRootImpl@8a00eca[MainActivity]( 9428): applyTransactionOnDraw: mRemoved = false isHardwareEnabled = true t = 0xb400007358f16c00android.view.SurfaceView.applyTransactionOnVriDraw:2048 android.view.SurfaceView.performSurfaceTransaction:959 android.view.SurfaceView.updateSurface:1105 android.view.SurfaceView.lambda$new$0$android-view-SurfaceView:200 android.view.SurfaceView$$ExternalSyntheticLambda5.onPreDraw:2 
+I/SurfaceView@4a9e828( 9428): updateSurface: mVisible = true mSurface.isValid() = true
+I/SurfaceView@4a9e828( 9428): updateSurface: mSurfaceCreated = false surfaceChanged = true visibleChanged = true
+I/SurfaceView@4a9e828( 9428): visibleChanged -- surfaceCreated
+I/SurfaceView@4a9e828( 9428): surfaceCreated 1 #8 io.flutter.embedding.android.FlutterSurfaceView{4a9e828 V.E...... ......ID 0,0-720,1574}
+E/ion     ( 9428): ioctl c0044901 failed with code -1: Invalid argument
+I/SurfaceView@4a9e828( 9428): surfaceChanged -- format=4 w=720 h=1574
+I/SurfaceView@4a9e828( 9428): surfaceChanged (720,1574) 1 #8 io.flutter.embedding.android.FlutterSurfaceView{4a9e828 V.E...... ......ID 0,0-720,1574}
+I/SurfaceView@4a9e828( 9428): surfaceRedrawNeeded
+V/SurfaceView@4a9e828( 9428): Layout: x=0 y=0 w=720 h=1574, frame=Rect(0, 0 - 720, 1574)
+W/System  ( 9428): ClassLoader referenced unknown path: 
+D/nativeloader( 9428): Configuring clns-5 for other apk . target_sdk_version=36, uses_libraries=, library_path=/data/app/~~g2uBQ9PP9EU9vvnCpUmB_w==/com.stealthanswer.stealth_answer-ezPXqYvhgPOtLwUoZSOjLw==/lib/arm64:/data/app/~~g2uBQ9PP9EU9vvnCpUmB_w==/com.stealthanswer.stealth_answer-ezPXqYvhgPOtLwUoZSOjLw==/base.apk!/lib/arm64-v8a, permitted_path=/data:/mnt/expand:/data/user/0/com.stealthanswer.stealth_answer
+I/ViewRootImpl@8a00eca[MainActivity]( 9428): stopped(true) old = false
+I/ViewRootImpl@8a00eca[MainActivity]( 9428): WindowStopped on com.stealthanswer.stealth_answer/com.stealthanswer.stealth_answer.MainActivity set to true
+I/SurfaceView@4a9e828( 9428): windowStopped(true) false io.flutter.embedding.android.FlutterSurfaceView{4a9e828 V.E...... ......ID 0,0-720,1574} of ViewRootImpl@8a00eca[MainActivity]
+I/SurfaceView@4a9e828( 9428): Changes: creating=false format=false size=false visible=true alpha=false hint=false mUseAlpha=false visible=true left=false top=false
+I/SurfaceView@4a9e828( 9428): 78243880 Cur surface: Surface(name=null)/@0xb1ca3cd
+I/SurfaceView@4a9e828( 9428): applyTransactionOnVriDraw: vri = ViewRootImpl@8a00eca[MainActivity] fRS = false t = 0xb400007358f16700 android.view.SurfaceView.performSurfaceTransaction:959 android.view.SurfaceView.updateSurface:1105 android.view.SurfaceView.setWindowStopped:335 
+I/ViewRootImpl@8a00eca[MainActivity]( 9428): applyTransactionOnDraw: mRemoved = false isHardwareEnabled = true t = 0xb400007358f16700android.view.SurfaceView.applyTransactionOnVriDraw:2048 android.view.SurfaceView.performSurfaceTransaction:959 android.view.SurfaceView.updateSurface:1105 android.view.SurfaceView.setWindowStopped:335 android.view.SurfaceView.surfaceDestroyed:1863 
+I/SurfaceView@4a9e828( 9428): surfaceDestroyed
+I/SurfaceView@4a9e828( 9428): surfaceDestroyed callback.size 1 #1 io.flutter.embedding.android.FlutterSurfaceView{4a9e828 V.E...... ......ID 0,0-720,1574}
+I/SurfaceView@4a9e828( 9428): updateSurface: mVisible = false mSurface.isValid() = true
+I/BLASTBufferQueue( 9428): [SurfaceView[com.stealthanswer.stealth_answer/com.stealthanswer.stealth_answer.MainActivity]@0#1](f:0,a:0) destructor()
+D/BufferQueueConsumer( 9428): [SurfaceView[com.stealthanswer.stealth_answer/com.stealthanswer.stealth_answer.MainActivity]@0#1(BLAST Consumer)1](id:24d400000001,api:0,p:-1,c:9428) disconnect
+I/SurfaceView@4a9e828( 9428): releaseSurfaces: viewRoot = ViewRootImpl@8a00eca[MainActivity]
+I/SurfaceView@4a9e828( 9428): applyTransactionOnVriDraw: vri = ViewRootImpl@8a00eca[MainActivity] fRS = true t = 0xb40000736be2b600 android.view.SurfaceView.releaseSurfaces:858 android.view.SurfaceView.updateSurface:1172 android.view.SurfaceView.setWindowStopped:335 
+I/SurfaceView@4a9e828( 9428): applyTransactionOnVriDraw: viewRoot.applyTransactionOnDrawFromReleaseSurfaces
+I/ViewRootImpl@8a00eca[MainActivity]( 9428): applyTransactionOnDraw: mRemoved = false isHardwareEnabled = true t = 0xb40000736be2b600android.view.ViewRootImpl.applyTransactionOnDrawFromReleaseSurfaces:12850 android.view.SurfaceView.applyTransactionOnVriDraw:2046 android.view.SurfaceView.releaseSurfaces:858 android.view.SurfaceView.updateSurface:1172 android.view.SurfaceView.setWindowStopped:335 
+V/SurfaceView@4a9e828( 9428): Layout: x=0 y=0 w=720 h=1574, frame=Rect(0, 0 - 720, 1574)
+D/SurfaceView@4a9e828( 9428): updateSurface: surface is not valid
+I/SurfaceView@4a9e828( 9428): releaseSurfaces: viewRoot = ViewRootImpl@8a00eca[MainActivity]
+I/SurfaceView@4a9e828( 9428): applyTransactionOnVriDraw: vri = ViewRootImpl@8a00eca[MainActivity] fRS = true t = 0xb40000736be2b800 android.view.SurfaceView.releaseSurfaces:858 android.view.SurfaceView.updateSurface:998 android.view.SurfaceView.setVisibility:392 
+I/SurfaceView@4a9e828( 9428): applyTransactionOnVriDraw: viewRoot.applyTransactionOnDrawFromReleaseSurfaces
+I/ViewRootImpl@8a00eca[MainActivity]( 9428): applyTransactionOnDraw: mRemoved = false isHardwareEnabled = true t = 0xb40000736be2b800android.view.ViewRootImpl.applyTransactionOnDrawFromReleaseSurfaces:12850 android.view.SurfaceView.applyTransactionOnVriDraw:2046 android.view.SurfaceView.releaseSurfaces:858 android.view.SurfaceView.updateSurface:998 android.view.SurfaceView.setVisibility:392 
+I/SiprixVoipSdkPlugin( 9428): onDetachedFromActivityForConfigChanges this:193024521
+I/SiprixVoipSdkPlugin( 9428): onDetachedFromEngine this:193024521 binding:151313422
+D/libMEOW ( 9428): meow new tls: 0xb40000735f3caa00
+D/libMEOW ( 9428): applied 2 plugins for [com.stealthanswer.stealth_answer]:
+D/libMEOW ( 9428):   plugin 1: [libMEOW_gift.so]:
+D/libMEOW ( 9428):   plugin 2: [libMEOW_semaphore]:
+D/libMEOW ( 9428): meow delete tls: 0xb40000736be87a80
+D/libMEOW ( 9428): meow delete tls: 0xb4000072d2e4c680
+I/SurfaceView@4a9e828( 9428): onWindowVisibilityChanged(8) false io.flutter.embedding.android.FlutterSurfaceView{4a9e828 G.E...... ......ID 0,0-720,1574} of ViewRootImpl@8a00eca[MainActivity]
+D/SurfaceView@4a9e828( 9428): updateSurface: surface is not valid
+I/SurfaceView@4a9e828( 9428): releaseSurfaces: viewRoot = ViewRootImpl@8a00eca[MainActivity]
+I/SurfaceView@4a9e828( 9428): applyTransactionOnVriDraw: vri = ViewRootImpl@8a00eca[MainActivity] fRS = true t = 0xb400007358f06800 android.view.SurfaceView.releaseSurfaces:858 android.view.SurfaceView.updateSurface:998 android.view.SurfaceView.onWindowVisibilityChanged:371 
+I/SurfaceView@4a9e828( 9428): applyTransactionOnVriDraw: viewRoot.applyTransactionOnDrawFromReleaseSurfaces
+I/ViewRootImpl@8a00eca[MainActivity]( 9428): applyTransactionOnDraw: mRemoved = true isHardwareEnabled = true t = 0xb400007358f06800android.view.ViewRootImpl.applyTransactionOnDrawFromReleaseSurfaces:12850 android.view.SurfaceView.applyTransactionOnVriDraw:2046 android.view.SurfaceView.releaseSurfaces:858 android.view.SurfaceView.updateSurface:998 android.view.SurfaceView.onWindowVisibilityChanged:371 
+D/SurfaceView@4a9e828( 9428): updateSurface: surface is not valid
+I/SurfaceView@4a9e828( 9428): releaseSurfaces: viewRoot = ViewRootImpl@8a00eca[MainActivity]
+I/SurfaceView@4a9e828( 9428): applyTransactionOnVriDraw: vri = ViewRootImpl@8a00eca[MainActivity] fRS = true t = 0xb4000072d2fab100 android.view.SurfaceView.releaseSurfaces:858 android.view.SurfaceView.updateSurface:998 android.view.SurfaceView.onDetachedFromWindow:496 
+I/SurfaceView@4a9e828( 9428): applyTransactionOnVriDraw: viewRoot.applyTransactionOnDrawFromReleaseSurfaces
+I/ViewRootImpl@8a00eca[MainActivity]( 9428): applyTransactionOnDraw: mRemoved = true isHardwareEnabled = true t = 0xb4000072d2fab100android.view.ViewRootImpl.applyTransactionOnDrawFromReleaseSurfaces:12850 android.view.SurfaceView.applyTransactionOnVriDraw:2046 android.view.SurfaceView.releaseSurfaces:858 android.view.SurfaceView.updateSurface:998 android.view.SurfaceView.onDetachedFromWindow:496 
+I/SurfaceView@4a9e828( 9428): onDetachedFromWindow: tryReleaseSurfaces()
+I/SurfaceView@4a9e828( 9428): releaseSurfaces: viewRoot = ViewRootImpl@8a00eca[MainActivity]
+I/SurfaceView@4a9e828( 9428): applyTransactionOnVriDraw: vri = ViewRootImpl@8a00eca[MainActivity] fRS = true t = 0xb4000072d1864900 android.view.SurfaceView.releaseSurfaces:858 android.view.SurfaceView.onDetachedFromWindow:500 android.view.View.dispatchDetachedFromWindow:22538 
+I/SurfaceView@4a9e828( 9428): applyTransactionOnVriDraw: viewRoot.applyTransactionOnDrawFromReleaseSurfaces
+I/ViewRootImpl@8a00eca[MainActivity]( 9428): applyTransactionOnDraw: mRemoved = true isHardwareEnabled = true t = 0xb4000072d1864900android.view.ViewRootImpl.applyTransactionOnDrawFromReleaseSurfaces:12850 android.view.SurfaceView.applyTransactionOnVriDraw:2046 android.view.SurfaceView.releaseSurfaces:858 android.view.SurfaceView.onDetachedFromWindow:500 android.view.View.dispatchDetachedFromWindow:22538 
+I/MSHandlerLifeCycle( 9428): removeMultiSplitHandler: no exist. decor=DecorView@a3ef91f[MainActivity]
+D/OpenGLRenderer( 9428): setSurface called with nullptr
+D/OpenGLRenderer( 9428): setSurface() destroyed EGLSurface
+D/OpenGLRenderer( 9428): destroyEglSurface
+I/BLASTBufferQueue( 9428): [ViewRootImpl@8a00eca[MainActivity]#0](f:0,a:0) destructor()
+D/BufferQueueConsumer( 9428): [ViewRootImpl@8a00eca[MainActivity]#0(BLAST Consumer)0](id:24d400000000,api:0,p:-1,c:9428) disconnect
+I/ViewRootImpl@8a00eca[MainActivity]( 9428): dispatchDetachedFromWindow
+D/InputTransport( 9428): Input channel destroyed: '79bde37', fd=126
+W/libc    ( 9428): Access denied finding property "vendor.debug.forcibly_enable_mtk_ray_tracing"
+I/flutter ( 9428): [IMPORTANT:flutter/shell/platform/android/android_context_vk_impeller.cc(62)] Using the Impeller rendering backend (Vulkan).
+D/libMEOW ( 9428): meow new tls: 0xb40000735f1c3600
+D/libMEOW ( 9428): applied 2 plugins for [com.stealthanswer.stealth_answer]:
+D/libMEOW ( 9428):   plugin 1: [libMEOW_gift.so]:
+D/libMEOW ( 9428):   plugin 2: [libMEOW_semaphore]:
+I/flutter ( 9428): [IMPORTANT:flutter/shell/platform/android/android_context_gl_impeller.cc(104)] Using the Impeller rendering backend (OpenGLES).
+D/libMEOW ( 9428): meow new tls: 0xb40000735f267b00
+D/libMEOW ( 9428): applied 2 plugins for [com.stealthanswer.stealth_answer]:
+D/libMEOW ( 9428):   plugin 1: [libMEOW_gift.so]:
+D/libMEOW ( 9428):   plugin 2: [libMEOW_semaphore]:
+I/SiprixVoipSdkPlugin( 9428): onAttachedToEngine this:190017938 binding:135137123
+D/CallNotifService( 9428): createSiprixCore return existing com.siprix.SiprixCore@2f2262f
+I/SiprixVoipSdkPlugin( 9428): onAttachedToActivity this:190017938
+W/Activity( 9428): Can request only one set of permissions at a time
+W/FlutterActivity( 9428): FlutterActivity 231440224 onRequestPermissionsResult called after detach.
+I/DecorView( 9428): [INFO] isPopOver=false config=true
+I/DecorView( 9428): updateCaptionType: isFloating=false isApplication=true hasWindowDecorCaption=false this=DecorView@181658d[]
+D/DecorView( 9428): setCaptionType = 0, this = DecorView@181658d[]
+I/DecorView( 9428): getCurrentDensityDpi: from real metrics. densityDpi=280 msg=resources_loaded
+I/DecorView( 9428): setWindowBackground: isPopOver=false color=ff000000 d=android.graphics.drawable.ColorDrawable@63f8f53
+I/MSHandlerLifeCycle( 9428): check: return. pkg=com.stealthanswer.stealth_answer parent=null callers=com.android.internal.policy.DecorView.setVisibility:4412 android.app.ActivityThread.handleResumeActivity:5476 android.app.servertransaction.ResumeActivityItem.execute:54 android.app.servertransaction.ActivityTransactionItem.execute:45 android.app.servertransaction.TransactionExecutor.executeLifecycleState:176 
+I/MSHandlerLifeCycle( 9428): removeMultiSplitHandler: no exist. decor=DecorView@181658d[]
+D/NativeCustomFrequencyManager( 9428): [NativeCFMS] BpCustomFrequencyManager::BpCustomFrequencyManager()
+I/DecorView( 9428): notifyKeepScreenOnChanged: keepScreenOn=false
+D/InsetsController( 9428): onStateChanged: InsetsState: {mDisplayFrame=Rect(0, 0 - 720, 1600), mDisplayCutout=DisplayCutout{insets=Rect(0, 45 - 0, 0) waterfall=Insets{left=0, top=0, right=0, bottom=0} boundingRect={Bounds=[Rect(0, 0 - 0, 0), Rect(272, 0 - 448, 45), Rect(0, 0 - 0, 0), Rect(0, 0 - 0, 0)]} cutoutPathParserInfo={CutoutPathParserInfo{displayWidth=720 displayHeight=1600 physicalDisplayWidth=720 physicalDisplayHeight=1600 density={1.75} cutoutSpec={M 0,0 H -88 V 45 H 88 V 0 H 0 Z} rotation={0} scale={1.0} physicalPixelDisplaySizeRatio={1.0}}}}, mRoundedCorners=RoundedCorners{[RoundedCorner{position=TopLeft, radius=56, center=Point(56, 56)}, RoundedCorner{position=TopRight, radius=56, center=Point(664, 56)}, RoundedCorner{position=BottomRight, radius=56, center=Point(664, 1544)}, RoundedCorner{position=BottomLeft, radius=56, center=Point(56, 1544)}]}  mRoundedCornerFrame=Rect(0, 0 - 720, 1600), mPrivacyIndicatorBounds=PrivacyIndicatorBounds {static bounds=Rect(643, 0 - 720, 45) rotation=0}, mSources= { InsetsSource: {mType=ITYPE_STATUS_BAR, mFrame=[0,0][720,45], mVisible=true, mInsetsRoundedCornerFrame=false}, InsetsSource: {mType=ITYPE_NAVIGATION_BAR, mFrame=[0,1574][720,1600], mVisible=true, mInsetsRoundedCornerFrame=false}, InsetsSource: {mType=ITYPE_LEFT_GESTURES, mFrame=[0,0][52,1600], mVisible=true, mInsetsRoundedCornerFrame=false}, InsetsSource: {mType=ITYPE_RIGHT_GESTURES, mFrame=[668,0][720,1600], mVisible=true, mInsetsRoundedCornerFrame=false}, InsetsSource: {mType=ITYPE_TOP_MANDATORY_GESTURES, mFrame=[0,0][720,66], mVisible=true, mInsetsRoundedCornerFrame=false}, InsetsSource: {mType=ITYPE_BOTTOM_MANDATORY_GESTURES, mFrame=[0,1544][720,1600], mVisible=true, mInsetsRoundedCornerFrame=false}, InsetsSource: {mType=ITYPE_LEFT_DISPLAY_CUTOUT, mFrame=[0,0][-100000,1600], mVisible=true, mInsetsRoundedCornerFrame=false}, InsetsSource: {mType=ITYPE_TOP_DISPLAY_CUTOUT, mFrame=[0,0][720,45], mVisible=true, mInsetsRoundedCornerFrame=false}, InsetsSource: {mType=ITYPE_RIGHT_DISPLAY_CUTOUT, mFrame=[100000,0][720,1600], mVisible=true, mInsetsRoundedCornerFrame=false}, InsetsSource: {mType=ITYPE_BOTTOM_DISPLAY_CUTOUT, mFrame=[0,100000][720,1600], mVisible=true, mInsetsRoundedCornerFrame=false}, InsetsSource: {mType=ITYPE_TOP_TAPPABLE_ELEMENT, mFrame=[0,0][720,45], mVisible=true, mInsetsRoundedCornerFrame=false}, InsetsSource: {mType=ITYPE_BOTTOM_TAPPABLE_ELEMENT, mFrame=[0,0][0,0], mVisible=true, mInsetsRoundedCornerFrame=false}, InsetsSource: {mType=ITYPE_IME, mFrame=[0,0][0,0], mVisibleFrame=[0,1516][720,1600], mVisible=false, mInsetsRoundedCornerFrame=false} } host=com.stealthanswer.stealth_answer/com.stealthanswer.stealth_answer.MainActivity from=android.view.ViewRootImpl.setView:1732
+I/ViewRootImpl@3ed8090[MainActivity]( 9428): setView = com.android.internal.policy.DecorView@181658d TM=true
+I/MSHandlerLifeCycle( 9428): removeMultiSplitHandler: no exist. decor=DecorView@181658d[MainActivity]
+I/Choreographer( 9428): Skipped 326 frames!  The application may be doing too much work on its main thread.
+I/SurfaceView@b4fb6bf( 9428): onWindowVisibilityChanged(0) true io.flutter.embedding.android.FlutterSurfaceView{b4fb6bf V.E...... ......I. 0,0-0,0} of ViewRootImpl@3ed8090[MainActivity]
+D/SurfaceView@b4fb6bf( 9428): updateSurface: has no frame
+I/ViewRootImpl@3ed8090[MainActivity]( 9428): performTraversals params={(0,0)(fillxfill) sim={adjust=resize forwardNavigation} ty=BASE_APPLICATION wanim=0x1030001
+I/ViewRootImpl@3ed8090[MainActivity]( 9428):   fl=81810100
+I/ViewRootImpl@3ed8090[MainActivity]( 9428):   pfl=12020040
+I/ViewRootImpl@3ed8090[MainActivity]( 9428):   vsysui=500
+I/ViewRootImpl@3ed8090[MainActivity]( 9428):   bhv=DEFAULT
+I/ViewRootImpl@3ed8090[MainActivity]( 9428):   fitSides= naviIconColor=0}
+I/ViewRootImpl@3ed8090[MainActivity]( 9428): performTraversals mFirst=true windowShouldResize=true viewVisibilityChanged=false mForceNextWindowRelayout=false params={(0,0)(fillxfill) sim={adjust=resize forwardNavigation} ty=BASE_APPLICATION fmt=TRANSLUCENT wanim=0x1030001
+I/ViewRootImpl@3ed8090[MainActivity]( 9428):   fl=81810100
+I/ViewRootImpl@3ed8090[MainActivity]( 9428):   pfl=12020040
+I/ViewRootImpl@3ed8090[MainActivity]( 9428):   vsysui=500
+I/ViewRootImpl@3ed8090[MainActivity]( 9428):   bhv=DEFAULT
+I/ViewRootImpl@3ed8090[MainActivity]( 9428):   fitSides= naviIconColor=0}
+I/ViewRootImpl@3ed8090[MainActivity]( 9428): updateBlastSurfaceIfNeeded mBlastBufferQueue=null isSameSurfaceControl=false
+D/BufferQueueConsumer( 9428): [](id:24d400000002,api:0,p:-1,c:9428) connect: controlledByApp=false
+I/BLASTBufferQueue( 9428): new BLASTBufferQueue, mName= ViewRootImpl@3ed8090[MainActivity] mNativeObject= 0xb40000735f24bc00 sc.mNativeObject= 0xb40000735f1aa240 caller= android.view.ViewRootImpl.updateBlastSurfaceIfNeeded:2909 android.view.ViewRootImpl.relayoutWindow:9847 android.view.ViewRootImpl.performTraversals:3884 android.view.ViewRootImpl.doTraversal:3116 android.view.ViewRootImpl$TraversalRunnable.run:10885 android.view.Choreographer$CallbackRecord.run:1301 android.view.Choreographer$CallbackRecord.run:1309 android.view.Choreographer.doCallbacks:923 android.view.Choreographer.doFrame:852 android.view.Choreographer$FrameDisplayEventReceiver.run:1283 
+I/BLASTBufferQueue( 9428): update, w= 720 h= 1600 mName = ViewRootImpl@3ed8090[MainActivity] mNativeObject= 0xb40000735f24bc00 sc.mNativeObject= 0xb40000735f1aa240 format= -3 caller= android.graphics.BLASTBufferQueue.<init>:84 android.view.ViewRootImpl.updateBlastSurfaceIfNeeded:2909 android.view.ViewRootImpl.relayoutWindow:9847 android.view.ViewRootImpl.performTraversals:3884 android.view.ViewRootImpl.doTraversal:3116 android.view.ViewRootImpl$TraversalRunnable.run:10885 
+I/ViewRootImpl@3ed8090[MainActivity]( 9428): Relayout returned: old=(0,0,720,1600) new=(0,0,720,1600) req=(720,1600)0 dur=27 res=0x3 s={true 0xb40000736be0a800} ch=true seqId=0
+I/ViewRootImpl@3ed8090[MainActivity]( 9428): mThreadedRenderer.initialize() mSurface={isValid=true 0xb40000736be0a800} hwInitialized=true
+D/OpenGLRenderer( 9428): eglCreateWindowSurface
+D/SurfaceView@b4fb6bf( 9428): updateSurface: has no frame
+I/SurfaceView@b4fb6bf( 9428): windowStopped(false) true io.flutter.embedding.android.FlutterSurfaceView{b4fb6bf V.E...... ......ID 0,0-720,1574} of ViewRootImpl@3ed8090[MainActivity]
+D/SurfaceView@b4fb6bf( 9428): updateSurface: has no frame
+I/ViewRootImpl@3ed8090[MainActivity]( 9428): reportNextDraw android.view.ViewRootImpl.performTraversals:4438 android.view.ViewRootImpl.doTraversal:3116 android.view.ViewRootImpl$TraversalRunnable.run:10885 android.view.Choreographer$CallbackRecord.run:1301 android.view.Choreographer$CallbackRecord.run:1309 
+I/SurfaceView@b4fb6bf( 9428): Changes: creating=true format=true size=true visible=true alpha=false hint=false mUseAlpha=false visible=true left=true top=true
+D/BufferQueueConsumer( 9428): [](id:24d400000003,api:0,p:-1,c:9428) connect: controlledByApp=false
+I/BLASTBufferQueue( 9428): update, w= 720 h= 1574 mName = null mNativeObject= 0xb40000735f24bf80 sc.mNativeObject= 0xb40000735f1aa740 format= 4 caller= android.view.SurfaceView.createBlastSurfaceControls:1383 android.view.SurfaceView.updateSurface:1079 android.view.SurfaceView.lambda$new$0$android-view-SurfaceView:200 android.view.SurfaceView$$ExternalSyntheticLambda5.onPreDraw:2 android.view.ViewTreeObserver.dispatchOnPreDraw:1121 android.view.ViewRootImpl.performTraversals:4442 
+I/SurfaceView@b4fb6bf( 9428): 189773503 Cur surface: Surface(name=null)/@0x692189a
+I/SurfaceView@b4fb6bf( 9428): pST: sr = Rect(0, 0 - 720, 1574) sw = 720 sh = 1574
+D/SurfaceView@b4fb6bf( 9428): performSurfaceTransaction RenderWorker position = [0, 0, 720, 1574] surfaceSize = 720x1574
+I/SurfaceView@b4fb6bf( 9428): applyTransactionOnVriDraw: vri = ViewRootImpl@3ed8090[MainActivity] fRS = false t = 0xb40000736bc97b00 android.view.SurfaceView.performSurfaceTransaction:959 android.view.SurfaceView.updateSurface:1105 android.view.SurfaceView.lambda$new$0$android-view-SurfaceView:200 
+I/ViewRootImpl@3ed8090[MainActivity]( 9428): applyTransactionOnDraw: mRemoved = false isHardwareEnabled = true t = 0xb40000736bc97b00android.view.SurfaceView.applyTransactionOnVriDraw:2048 android.view.SurfaceView.performSurfaceTransaction:959 android.view.SurfaceView.updateSurface:1105 android.view.SurfaceView.lambda$new$0$android-view-SurfaceView:200 android.view.SurfaceView$$ExternalSyntheticLambda5.onPreDraw:2 
+I/SurfaceView@b4fb6bf( 9428): updateSurface: mVisible = true mSurface.isValid() = true
+I/SurfaceView@b4fb6bf( 9428): updateSurface: mSurfaceCreated = false surfaceChanged = true visibleChanged = true
+I/SurfaceView@b4fb6bf( 9428): visibleChanged -- surfaceCreated
+I/SurfaceView@b4fb6bf( 9428): surfaceCreated 1 #8 io.flutter.embedding.android.FlutterSurfaceView{b4fb6bf V.E...... ......ID 0,0-720,1574}
+I/SurfaceView@b4fb6bf( 9428): surfaceChanged -- format=4 w=720 h=1574
+I/SurfaceView@b4fb6bf( 9428): surfaceChanged (720,1574) 1 #8 io.flutter.embedding.android.FlutterSurfaceView{b4fb6bf V.E...... ......ID 0,0-720,1574}
+I/SurfaceView@b4fb6bf( 9428): surfaceRedrawNeeded
+V/SurfaceView@b4fb6bf( 9428): Layout: x=0 y=0 w=720 h=1574, frame=Rect(0, 0 - 720, 1574)
+W/FlutterJNI( 9428): Tried to send a platform message response, but FlutterJNI was detached from native C++. Could not send. Response ID: 1
+D/CompatibilityChangeReporter( 9428): Compat change id reported: 78294732; UID 10619; state: ENABLED
+I/ViewRootImpl@3ed8090[MainActivity]( 9428): stopped(false) old = false
+I/DecorView( 9428): notifyKeepScreenOnChanged: keepScreenOn=false
+I/MSHandlerLifeCycle( 9428): removeMultiSplitHandler: no exist. decor=DecorView@181658d[MainActivity]

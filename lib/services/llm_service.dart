@@ -141,7 +141,7 @@ class LlmService extends ChangeNotifier {
     _setupTimer = Timer(const Duration(seconds: 8), () {
       if (!_sessionReady && _state == LlmState.connecting) {
         debugPrint('[LLM] Setup timeout reached (8s)');
-        _fail('Gemini Live did not become ready. Check setup payload and raw server response.');
+        _fail('Gemini Live did not become ready. Check setup payload.');
       }
     });
 
@@ -155,13 +155,10 @@ class LlmService extends ChangeNotifier {
         'systemInstruction': {
           'parts': [
             {
-              'text': 'You are a professional real-time interview assistant.\n\n'
-                  'Rules:\n'
-                  '- Always transcribe the caller\'s speech into English only.\n'
-                  '- Even if the caller speaks in Telugu or any other language, output the transcription in English only.\n'
-                  '- Caller question transcription is for UI display only.\n'
-                  '- AI answers will be generated separately.\n'
-                  'Resume context:\n$_resumeText'
+              'text': 'You are a professional real-time interview assistant.\n'
+                  'Always transcribe the caller speech into English only.\n'
+                  'Even if the caller speaks Telugu or another language, output English only.\n'
+                  'Do not generate coaching answers here.'
             }
           ]
         },
@@ -211,7 +208,6 @@ class LlmService extends ChangeNotifier {
       } else if (raw is Uint8List) {
         text = utf8.decode(raw);
       } else {
-        debugPrint('[LLM] Unknown message type: ${raw.runtimeType}');
         return;
       }
 
@@ -220,17 +216,16 @@ class LlmService extends ChangeNotifier {
       if (data['error'] != null) {
         final err = data['error'] as Map<String, dynamic>;
         final msg = err['message']?.toString() ?? 'Unknown Gemini Live error';
-        _fail('Gemini Live setup failed: $msg');
+        _fail('Gemini Live error: $msg');
         return;
       }
 
-      // Session ready
       if (data.containsKey('setupComplete')) {
         _setupTimer?.cancel();
         _sessionReady = true;
         _reconnects = 0;
         _state = LlmState.ready;
-        debugPrint('[LLM] ✅ Session ready! Audio streaming live.');
+        debugPrint('[LLM] ✅ Session ready!');
         notifyListeners();
         return;
       }
@@ -238,7 +233,6 @@ class LlmService extends ChangeNotifier {
       final sc = data['serverContent'] as Map<String, dynamic>?;
       if (sc == null) return;
 
-      // 1. Handle Caller (inputTranscription) - ONLY path from WebSocket
       final inputTx = sc['inputTranscription'] as Map<String, dynamic>?;
       if (inputTx != null) {
         final text = _extractTranscriptText(inputTx);
@@ -255,19 +249,11 @@ class LlmService extends ChangeNotifier {
         }
       }
 
-      // ── generationComplete → finalize ─────────
-      if (sc['generationComplete'] == true) {
-        debugPrint('[LLM] ⚡ generationComplete seen');
-        _finalizeQuestion('generationComplete');
+      if (sc['generationComplete'] == true || sc['turnComplete'] == true) {
+        _finalizeQuestion('server-flag');
       }
-
-      // ── turnComplete → finalize ─────────────────────────────────
-      if (sc['turnComplete'] == true) {
-        debugPrint('[LLM] ⚡ turnComplete seen');
-        _finalizeQuestion('turnComplete');
-      }
-    } catch (e, st) {
-      debugPrint('[LLM] onMsg error: $e\n$st');
+    } catch (e) {
+      debugPrint('[LLM] onMsg parse error: $e');
     }
   }
 
@@ -376,18 +362,8 @@ class LlmService extends ChangeNotifier {
     final ctx = <Map<String, dynamic>>[];
     for (final t in _history.take(8)) {
       ctx
-        ..add({
-          'role': 'user',
-          'parts': [
-            {'text': t['question']}
-          ]
-        })
-        ..add({
-          'role': 'model',
-          'parts': [
-            {'text': t['answer']}
-          ]
-        });
+        ..add({'role': 'user', 'parts': [{'text': t['question']}]})
+        ..add({'role': 'model', 'parts': [{'text': t['answer']}]});
     }
 
     final prompt = '''
@@ -411,19 +387,17 @@ $_resumeText
         ...ctx,
         {
           'role': 'user',
-          'parts': [
-            {'text': prompt}
-          ]
+          'parts': [{'text': prompt}]
         }
       ],
       'generationConfig': {
         'temperature': 0.7,
-        'maxOutputTokens': 200,
+        'maxOutputTokens': 220,
       },
     });
 
-    _lastAnswerDraft = '';
-    onAIAnswerDraftUpdate?.call('Thinking...');
+    _lastAnswerDraft = 'Thinking...';
+    onAIAnswerDraftUpdate?.call(_lastAnswerDraft);
 
     try {
       final req = http.Request('POST', url)
@@ -440,14 +414,10 @@ $_resumeText
             'Answer generation failed (${resp.statusCode}). Please retry.';
         onAIAnswerDraftUpdate?.call(visibleError);
         onTurnFinalized?.call(question, visibleError);
-        _questionFinalizedForCurrentTurn = false;
-        _state = LlmState.ready;
-        notifyListeners();
         return;
       }
 
-      debugPrint('[LLM] Answer stream started…');
-
+      _lastAnswerDraft = '';
       await for (final line in resp.stream
           .transform(utf8.decoder)
           .transform(const LineSplitter())) {

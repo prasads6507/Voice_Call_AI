@@ -1,8 +1,20 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class StorageService {
-  static const _secureStorage = FlutterSecureStorage();
+  static const AndroidOptions _androidOptions = AndroidOptions(
+    encryptedSharedPreferences: true,
+  );
+
+  static const IOSOptions _iosOptions = IOSOptions(
+    accessibility: KeychainAccessibility.first_unlock,
+  );
+
+  static const FlutterSecureStorage _secureStorage = FlutterSecureStorage(
+    aOptions: _androidOptions,
+    iOptions: _iosOptions,
+  );
   
   // Keys
   static const String _sipUsername = 'sip_username';
@@ -39,16 +51,38 @@ class StorageService {
 
   // Gemini API Key (secure)
   static Future<void> saveGeminiApiKey(String key) async {
-    await _secureStorage.write(key: _geminiApiKey, value: key);
+    final cleaned = key.trim();
+
+    if (cleaned.isEmpty) {
+      throw Exception('Gemini API key is empty');
+    }
+
+    await _secureStorage.delete(key: _geminiApiKey);
+    await _secureStorage.write(key: _geminiApiKey, value: cleaned);
+
+    final verify = await _secureStorage.read(key: _geminiApiKey);
+    debugPrint('[Storage] Saved Gemini key? ${verify != null && verify.isNotEmpty}');
+
+    if (verify == null || verify.trim().isEmpty) {
+      throw Exception('Gemini API key could not be verified after save');
+    }
   }
 
   static Future<String> getGeminiApiKey() async {
-    return await _secureStorage.read(key: _geminiApiKey) ?? '';
+    final key = await _secureStorage.read(key: _geminiApiKey);
+    final cleaned = key?.trim() ?? '';
+    debugPrint('[Storage] Read Gemini key length: ${cleaned.length}');
+    return cleaned;
   }
 
   static Future<bool> hasGeminiApiKey() async {
-    final key = await _secureStorage.read(key: _geminiApiKey);
-    return key != null && key.isNotEmpty;
+    final key = await getGeminiApiKey();
+    return key.isNotEmpty;
+  }
+
+  static Future<void> clearGeminiApiKey() async {
+    await _secureStorage.delete(key: _geminiApiKey);
+    debugPrint('[Storage] Gemini key cleared');
   }
 
   // Google Voice Number

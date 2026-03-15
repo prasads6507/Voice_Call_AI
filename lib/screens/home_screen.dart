@@ -98,6 +98,10 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _loadData() async {
     _gvNumber = await StorageService.getGvNumber();
     _hasApiKey = await StorageService.hasGeminiApiKey();
+    
+    final apiKey = await StorageService.getGeminiApiKey();
+    debugPrint('[Home] Gemini key present: ${apiKey.isNotEmpty}, length=${apiKey.length}');
+
     setState(() {});
 
     // Auto-register SIP

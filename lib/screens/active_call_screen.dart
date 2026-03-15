@@ -76,8 +76,31 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
       _sip!.addListener(_onSipChange);
       _llm!.addListener(_onLlmChange);
       _wireCallbacks();
-      await _llm!.initialize(resumeText: _resume);
-      await _audio.startTunnel((chunk) => _llm?.sendAudioChunk(chunk));
+
+      final ok = await _llm!.initialize(resumeText: _resume);
+      if (!ok || !mounted) return;
+
+      // WAIT until Gemini Live sends setupComplete / ready
+      var attempts = 0;
+      while (mounted &&
+          _llm!.state != LlmState.ready &&
+          attempts < 100) {
+        await Future.delayed(const Duration(milliseconds: 100));
+        attempts++;
+      }
+
+      if (!mounted) return;
+
+      if (_llm!.state != LlmState.ready) {
+        debugPrint('[ActiveCall] LLM never became ready, not starting audio yet');
+        return;
+      }
+
+      debugPrint('[ActiveCall] LLM is ready. Starting audio tunnel…');
+      await _audio.startTunnel((chunk) {
+        _llm?.sendAudioChunk(chunk);
+      });
+
       if (mounted) setState(() {});
     });
   }

@@ -30,6 +30,11 @@ class _ApiKeyScreenState extends State<ApiKeyScreen> {
       return;
     }
 
+    if (!key.startsWith('AIza')) {
+      setState(() => _error = 'Gemini API key should usually start with AIza');
+      return;
+    }
+
     if (key.length < 20) {
       setState(() => _error = 'API key seems too short. Check and try again.');
       return;
@@ -41,21 +46,26 @@ class _ApiKeyScreenState extends State<ApiKeyScreen> {
     });
 
     try {
-      // Save the key
       await StorageService.saveGeminiApiKey(key);
       
-      if (mounted) {
-        // Navigate to next onboarding step or home
-        Navigator.pushNamedAndRemoveUntil(
-          context,
-          AppRouter.home,
-          (route) => false,
-        );
+      final saved = await StorageService.getGeminiApiKey();
+      if (saved.isEmpty) {
+        throw Exception('Key save verification failed');
       }
+
+      if (!mounted) return;
+
+      // Navigate to home
+      Navigator.pushNamedAndRemoveUntil(
+        context,
+        AppRouter.home,
+        (route) => false,
+      );
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _isValidating = false;
-        _error = 'Failed to save key: ${e.toString()}';
+        _error = 'Failed to save key: $e';
       });
     }
   }

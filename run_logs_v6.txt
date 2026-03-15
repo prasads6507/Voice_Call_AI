@@ -41,23 +41,31 @@ Got dependencies!
 37 packages have newer versions incompatible with dependency constraints.
 Try `flutter pub outdated` for more information.
 Launching lib/main.dart on SM S134DL in debug mode...
-Running Gradle task 'assembleDebug'...                             11.5s
-✓ Built build/app/outputs/flutter-apk/app-debug.apk
-Installing build/app/outputs/flutter-apk/app-debug.apk...           9.4s
-D/FlutterJNI(23932): Beginning load of flutter...
-D/FlutterJNI(23932): flutter (null) was loaded normally!
-I/flutter (23932): [IMPORTANT:flutter/shell/platform/android/android_context_vk_impeller.cc(62)] Using the Impeller rendering backend (Vulkan).
-I/flutter (23932): [IMPORTANT:flutter/shell/platform/android/android_context_gl_impeller.cc(104)] Using the Impeller rendering backend (OpenGLES).
-Syncing files to device SM S134DL...                                82ms
+Running Gradle task 'assembleDebug'...                          
+lib/services/storage_service.dart:63:5: Error: Method not found: 'debugPrint'.
+    debugPrint('[Storage] Saved Gemini key? ${verify != null && verify.isNotEmpty}');
+    ^^^^^^^^^^
+lib/services/storage_service.dart:73:5: Error: Method not found: 'debugPrint'.
+    debugPrint('[Storage] Read Gemini key length: ${cleaned.length}');
+    ^^^^^^^^^^
+lib/services/storage_service.dart:84:5: Error: Method not found: 'debugPrint'.
+    debugPrint('[Storage] Gemini key cleared');
+    ^^^^^^^^^^
+Target kernel_snapshot_program failed: Exception
 
-Flutter run key commands.
-r Hot reload. 🔥🔥🔥
-R Hot restart.
-h List all available interactive commands.
-d Detach (terminate "flutter run" but leave application running).
-c Clear the screen
-q Quit (terminate the application on the device).
 
-A Dart VM Service on SM S134DL is available at: http://127.0.0.1:49485/MQGxBlP7MVI=/
-The Flutter DevTools debugger and profiler on SM S134DL is available at: http://127.0.0.1:49485/MQGxBlP7MVI=/devtools/?uri=ws://127.0.0.1:49485/MQGxBlP7MVI=/ws
-I/Choreographer(23932): Skipped 55 frames!  The application may be doing too much work on its main thread.
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':app:compileFlutterBuildDebug'.
+> Process 'command '/Users/sivasai/flutter/bin/flutter'' finished with non-zero exit value 1
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+
+BUILD FAILED in 3s
+Running Gradle task 'assembleDebug'...                              3.8s
+Error: Gradle task assembleDebug failed with exit code 1

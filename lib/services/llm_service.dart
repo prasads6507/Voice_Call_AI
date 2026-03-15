@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -53,6 +54,9 @@ class LlmService extends ChangeNotifier {
   String _turnText = '';
   final List<Map<String, String>> _history = [];
 
+  Timer? _silenceTimer;
+  Timer? _setupTimer;
+
   // ── Callbacks ──────────────────────────────────────────────────
   Function(String)? onCallerSpeechUpdate;
   Function(String)? onAIAnswerStreaming;
@@ -97,6 +101,7 @@ class LlmService extends ChangeNotifier {
     notifyListeners();
 
     _apiKey = await StorageService.getGeminiApiKey();
+    debugPrint('[LLM] Loaded Gemini key length: ${_apiKey.length}');
     if (_apiKey.isEmpty) {
       _fail('No Gemini API key found.\nGo to Settings → Add API Key.');
       return false;
@@ -140,10 +145,10 @@ class LlmService extends ChangeNotifier {
   Future<bool> _connect() async {
     try {
       final uri = Uri.parse('$_wsUrl?key=$_apiKey');
-      debugPrint('[LLM] WS connecting…');
+      debugPrint('[LLM] WS connecting to: $_wsUrl');
       _ws = WebSocketChannel.connect(uri);
       await _ws!.ready;
-      debugPrint('[LLM] WS open. Sending setup…');
+      debugPrint('[LLM] WebSocket open. Sending setup…');
       _sendSetup();
       _wsSub = _ws!.stream.listen(_onMsg, onError: _onWsErr, onDone: _onWsDone);
       return true;
@@ -168,24 +173,28 @@ class LlmService extends ChangeNotifier {
   //  It is a sibling of generationConfig under setup.
   // ══════════════════════════════════════════════════════════════
   void _sendSetup() {
+    _setupTimer?.cancel();
+    _setupTimer = Timer(const Duration(seconds: 8), () {
+      if (!_sessionReady && _state == LlmState.connecting) {
+        debugPrint('[LLM] Setup timeout reached (8s)');
+        _fail('Gemini Live did not become ready. Check setup payload and raw server response.');
+      }
+    });
+
     final msg = jsonEncode({
       'setup': {
         'model': 'models/$_liveModel',
-
-        // GenerationConfig — only contains response modalities
         'generationConfig': {
           'responseModalities': ['AUDIO'],
         },
-
-        // ✅ TOP LEVEL of setup — NOT inside generationConfig
         'inputAudioTranscription': {},
-
+        'outputAudioTranscription': {},
         'systemInstruction': {
           'parts': [
             {
-              'text': 'You are a silent listener. '
-                  'Do not generate any responses. '
-                  'Just transcribe the audio input.'
+              'text': 'You are a real-time interview assistant. '
+                  'Transcribe the interviewer audio and help generate short coaching answers. '
+                  'Resume context:\n$_resumeText'
             }
           ]
         },
@@ -200,15 +209,27 @@ class LlmService extends ChangeNotifier {
   //  AUDIO INPUT
   // ══════════════════════════════════════════════════════════════
 
-  void sendAudioChunk(List<int> pcmBytes) {
-    if (!_sessionReady || _ws == null) return;
-    _ws!.sink.add(jsonEncode({
-      'realtimeInput': {
-        'mediaChunks': [
-          {'mimeType': 'audio/pcm;rate=16000', 'data': base64Encode(pcmBytes)}
-        ]
-      }
-    }));
+  void sendAudioChunk(List<int> chunk) {
+    if (!_sessionReady || _ws == null) {
+      debugPrint('[LLM] Dropping audio chunk: session not ready yet');
+      return;
+    }
+
+    try {
+      final b64 = base64Encode(chunk);
+      _ws!.sink.add(jsonEncode({
+        'realtimeInput': {
+          'mediaChunks': [
+            {
+              'mimeType': 'audio/pcm;rate=16000',
+              'data': b64,
+            }
+          ]
+        }
+      }));
+    } catch (e) {
+      debugPrint('[LLM] sendAudioChunk error: $e');
+    }
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -217,11 +238,30 @@ class LlmService extends ChangeNotifier {
 
   void _onMsg(dynamic raw) {
     try {
-      final data = jsonDecode(raw as String) as Map<String, dynamic>;
-      debugPrint('[LLM] ← ${raw.toString().substring(0, raw.toString().length.clamp(0, 120))}');
+      String text;
+      if (raw is String) {
+        text = raw;
+      } else if (raw is Uint8List) {
+        text = utf8.decode(raw);
+      } else {
+        debugPrint('[LLM] Unknown message type: ${raw.runtimeType}');
+        return;
+      }
+
+      debugPrint('[LLM] RAW MESSAGE: $text');
+
+      final data = jsonDecode(text) as Map<String, dynamic>;
+
+      if (data['error'] != null) {
+        final err = data['error'] as Map<String, dynamic>;
+        final msg = err['message']?.toString() ?? 'Unknown Gemini Live error';
+        _fail('Gemini Live setup failed: $msg');
+        return;
+      }
 
       // Session ready
       if (data.containsKey('setupComplete')) {
+        _setupTimer?.cancel();
         _sessionReady = true;
         _reconnects = 0;
         _state = LlmState.ready;
@@ -233,53 +273,125 @@ class LlmService extends ChangeNotifier {
       final sc = data['serverContent'] as Map<String, dynamic>?;
       if (sc == null) return;
 
-      // ── Caller speech transcription ───────────────────────────
+      String extractedText = '';
+
+      // Path 1: current path
       final inputTx = sc['inputTranscription'] as Map<String, dynamic>?;
       if (inputTx != null) {
-        String chunk = '';
+        extractedText = _extractTranscriptText(inputTx);
+      }
 
-        // Plain text (standard path with empty inputAudioTranscription config)
-        final txt = inputTx['text'] as String? ?? '';
-        if (txt.trim().isNotEmpty) chunk = txt;
-
-        // Parts array fallback
-        if (chunk.isEmpty) {
-          final parts = inputTx['parts'] as List<dynamic>?;
-          for (final p in parts ?? []) {
-            final t = (p as Map<String, dynamic>)['text'] as String?;
-            if (t != null && t.trim().isNotEmpty) chunk += t;
-          }
+      // Path 2: fallback shapes
+      if (extractedText.isEmpty) {
+        final modelTurn = sc['modelTurn'] as Map<String, dynamic>?;
+        if (modelTurn != null) {
+          extractedText = _extractTranscriptText(modelTurn);
         }
+      }
 
-        if (chunk.isNotEmpty) {
-          _turnText += chunk;
-          if (_state != LlmState.generating) _state = LlmState.transcribing;
-          debugPrint('[LLM] 🎤 "$chunk"');
-          onCallerSpeechUpdate?.call(_turnText);
-          notifyListeners();
+      if (extractedText.isEmpty) {
+        final outputTx = sc['outputTranscription'] as Map<String, dynamic>?;
+        if (outputTx != null) {
+          extractedText = _extractTranscriptText(outputTx);
         }
+      }
+
+      if (extractedText.isNotEmpty) {
+        _turnText = extractedText; // use latest full text instead of unsafe append
+        if (_state != LlmState.generating) {
+          _state = LlmState.transcribing;
+        }
+        debugPrint('[LLM] 🎤 "$extractedText"');
+        onCallerSpeechUpdate?.call(_turnText);
+        _scheduleFinalizeFromSilence();
+        notifyListeners();
       }
 
       // ── generationComplete → generate coaching answer ─────────
       if (sc['generationComplete'] == true) {
-        final question = _turnText.trim();
-        _turnText = '';
-        debugPrint('[LLM] ⚡ generationComplete → "$question"');
-        if (question.isNotEmpty) {
-          _state = LlmState.generating;
-          notifyListeners();
-          _generateAnswer(question);
-        }
+        debugPrint('[LLM] ⚡ generationComplete seen');
+        _finalizeQuestionAndAnswer('generationComplete');
       }
 
       // ── turnComplete ──────────────────────────────────────────
-      if (sc['turnComplete'] == true && _state != LlmState.generating) {
-        _state = LlmState.ready;
-        notifyListeners();
+      if (sc['turnComplete'] == true) {
+        debugPrint('[LLM] ⚡ turnComplete seen');
+        _finalizeQuestionAndAnswer('turnComplete');
       }
     } catch (e, st) {
       debugPrint('[LLM] onMsg error: $e\n$st');
     }
+  }
+
+  void _scheduleFinalizeFromSilence() {
+    _silenceTimer?.cancel();
+    _silenceTimer = Timer(const Duration(milliseconds: 1400), () {
+      _finalizeQuestionAndAnswer('silence-timeout');
+    });
+  }
+
+  void _finalizeQuestionAndAnswer(String source) {
+    final question = _turnText.trim();
+    if (question.isEmpty) {
+      if (_state == LlmState.transcribing) {
+        _state = LlmState.ready;
+        notifyListeners();
+      }
+      return;
+    }
+    if (_state == LlmState.generating) return;
+
+    debugPrint('[LLM] Finalizing question from $source → "$question"');
+    _silenceTimer?.cancel();
+    _turnText = '';
+    _state = LlmState.generating;
+    notifyListeners();
+    _generateAnswer(question);
+  }
+
+  String _extractTranscriptText(Map<String, dynamic> node) {
+    final direct = node['text'] as String?;
+    if (direct != null && direct.trim().isNotEmpty) {
+      return direct.trim();
+    }
+
+    final parts = node['parts'] as List<dynamic>?;
+    if (parts != null) {
+      final buffer = StringBuffer();
+      for (final item in parts) {
+        if (item is Map<String, dynamic>) {
+          final t = item['text'] as String?;
+          if (t != null && t.trim().isNotEmpty) {
+            if (buffer.isNotEmpty) buffer.write(' ');
+            buffer.write(t.trim());
+          }
+        }
+      }
+      if (buffer.isNotEmpty) {
+        return buffer.toString();
+      }
+    }
+
+    final candidates = node['candidates'] as List<dynamic>?;
+    if (candidates != null) {
+      for (final c in candidates) {
+        if (c is Map<String, dynamic>) {
+          final content = c['content'] as Map<String, dynamic>?;
+          if (content != null) {
+            final nested = _extractTranscriptText(content);
+            if (nested.isNotEmpty) return nested;
+          }
+        }
+      }
+    }
+
+    final content = node['content'] as Map<String, dynamic>?;
+    if (content != null) {
+      final nested = _extractTranscriptText(content);
+      if (nested.isNotEmpty) return nested;
+    }
+
+    return '';
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -332,6 +444,8 @@ class LlmService extends ChangeNotifier {
         return;
       }
 
+      debugPrint('[LLM] Answer stream started…');
+
       await for (final line in resp.stream
           .transform(utf8.decoder)
           .transform(const LineSplitter())) {
@@ -354,6 +468,7 @@ class LlmService extends ChangeNotifier {
       }
 
       if (full.trim().isNotEmpty) {
+        debugPrint('[LLM] Answer stream completed. Length: ${full.length}');
         _history.insert(0, {'question': question, 'answer': full.trim()});
         if (_history.length > 20) _history.removeLast();
         onTurnComplete?.call(question, full.trim());
@@ -389,6 +504,13 @@ class LlmService extends ChangeNotifier {
       return;
     }
 
+    String closeInfo = code != null ? ' (code $code${reason != null && reason.isNotEmpty ? ": $reason" : ""})' : '';
+
+    if (code == 4000 || (reason != null && reason.contains('setup'))) {
+      _fail('Gemini Live rejected setup$closeInfo.\nCheck setup payload.');
+      return;
+    }
+
     if (_reconnects < _maxReconnects) {
       _reconnects++;
       _state = LlmState.connecting;
@@ -398,7 +520,6 @@ class LlmService extends ChangeNotifier {
         if (!_closedByUser) _connect();
       });
     } else {
-      String closeInfo = code != null ? ' (code $code${reason != null ? ": $reason" : ""})' : '';
       _fail('Connection failed$closeInfo.\n\n'
           'Check:\n'
           '• API key is valid (Settings → API Key)\n'
@@ -426,6 +547,8 @@ class LlmService extends ChangeNotifier {
 
   void disconnect() {
     _closedByUser = true;
+    _silenceTimer?.cancel();
+    _setupTimer?.cancel();
     _wsSub?.cancel();
     _wsSub = null;
     _ws?.sink.close();

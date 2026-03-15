@@ -35,10 +35,12 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
   Timer? _timer;
   Duration _elapsed = Duration.zero;
   String _resume = '';
-  final List<_Msg> _msgs = [];
-
   // Prevents double Navigator.pop → black screen crash
+  final List<_Msg> _msgs = [];
   bool _didHangUp = false;
+
+  String? _callerDraft;
+  String? _aiDraft;
 
   @override
   void initState() {
@@ -56,9 +58,10 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
     _audio.dispose();
     _scroll.dispose();
     if (_llm != null) {
-      _llm!.onCallerSpeechUpdate = null;
-      _llm!.onAIAnswerStreaming = null;
-      _llm!.onTurnComplete = null;
+      _llm!.onCallerDraftUpdate = null;
+      _llm!.onCallerQuestionFinalized = null;
+      _llm!.onAIAnswerDraftUpdate = null;
+      _llm!.onTurnFinalized = null;
       _llm!.removeListener(_onLlmChange);
     }
     _sip?.removeListener(_onSipChange);
@@ -118,43 +121,46 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
   void _wireCallbacks() {
     if (_llm == null) return;
 
-    _llm!.onCallerSpeechUpdate = (String text) {
+    _llm!.onCallerDraftUpdate = (text) {
       if (!mounted) return;
       setState(() {
-        final last = _msgs.isNotEmpty ? _msgs.last : null;
-        if (last != null && last.streaming && last.type == _MsgType.callerQuestion) {
-          last.text = text;
-        } else {
-          _msgs.add(_Msg(type: _MsgType.callerQuestion, text: text, streaming: true));
-        }
+        _callerDraft = text;
       });
       _scrollDown();
     };
 
-    _llm!.onAIAnswerStreaming = (String text) {
+    _llm!.onCallerQuestionFinalized = (question) {
       if (!mounted) return;
       setState(() {
-        if (_msgs.isNotEmpty && _msgs.last.streaming &&
-            _msgs.last.type == _MsgType.callerQuestion) {
-          _msgs.last.streaming = false;
-        }
-        if (_msgs.isNotEmpty && _msgs.last.streaming &&
-            _msgs.last.type == _MsgType.aiAnswer) {
-          _msgs.last.text = text;
-        } else {
-          _msgs.add(_Msg(type: _MsgType.aiAnswer, text: text, streaming: true));
-        }
+        _callerDraft = null;
+        _msgs.add(_Msg(
+          type: _MsgType.callerQuestion,
+          text: question,
+          streaming: false,
+        ));
       });
       _scrollDown();
     };
 
-    _llm!.onTurnComplete = (_, __) {
+    _llm!.onAIAnswerDraftUpdate = (text) {
       if (!mounted) return;
       setState(() {
-        if (_msgs.isNotEmpty && _msgs.last.streaming) {
-          _msgs.last.streaming = false;
-        }
+        _aiDraft = text;
       });
+      _scrollDown();
+    };
+
+    _llm!.onTurnFinalized = (question, answer) {
+      if (!mounted) return;
+      setState(() {
+        _aiDraft = null;
+        _msgs.add(_Msg(
+          type: _MsgType.aiAnswer,
+          text: answer,
+          streaming: false,
+        ));
+      });
+      _scrollDown();
     };
   }
 
@@ -203,6 +209,9 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
     _timer?.cancel();
     _audio.stopTunnel();
     _llm?.clearSession();
+    _msgs.clear();
+    _callerDraft = null;
+    _aiDraft = null;
     if (mounted) Navigator.of(context).pop();
   }
 
@@ -236,15 +245,15 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
         spin = false;
       case LlmState.generating:
         badgeColor = AppTheme.primary;
-        badgeLabel = 'Coaching…';
+        badgeLabel = 'Thinking…';
         spin = true;
       case LlmState.transcribing:
-        badgeColor = Colors.orange;
-        badgeLabel = 'Hearing…';
+        badgeColor = AppTheme.primary;
+        badgeLabel = 'Listening…';
         spin = true;
       case LlmState.ready:
         badgeColor = AppTheme.accentGreen;
-        badgeLabel = 'Listening';
+        badgeLabel = 'Ready';
         spin = false;
       default:
         badgeColor = AppTheme.textMuted;
@@ -308,20 +317,30 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
   // ── Chat ─────────────────────────────────────────────────────────
 
   Widget _chat() {
-    if (_msgs.isEmpty) {
-      final s = _llm?.state ?? LlmState.connecting;
+    final s = _llm?.state ?? LlmState.connecting;
+    
+    // Build a helper list for the ListView
+    final displayMsgs = [..._msgs];
+    if (_callerDraft != null && _callerDraft!.isNotEmpty) {
+      displayMsgs.add(_Msg(type: _MsgType.callerQuestion, text: _callerDraft!, streaming: true));
+    }
+    if (_aiDraft != null) {
+      displayMsgs.add(_Msg(type: _MsgType.aiAnswer, text: _aiDraft!, streaming: true));
+    }
+
+    if (displayMsgs.isEmpty) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 28),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Icon(Icons.hearing_outlined, size: 56, color: AppTheme.textMuted.withOpacity(0.3)),
+            Icon(Icons.forum_outlined, size: 56, color: AppTheme.textMuted.withOpacity(0.3)),
             const SizedBox(height: 16),
-            const Text('Listening for the interviewer…',
+            const Text('Temporary Session Chat',
                 style: TextStyle(fontSize: 16, color: AppTheme.textSecondary, fontWeight: FontWeight.w500),
                 textAlign: TextAlign.center),
             const SizedBox(height: 8),
             Text(
-              'Questions appear here as they\'re asked.\nYour AI coach responds instantly.',
+              'Interview audio translates to English chat bubbles here.\nMessages are cleared when you hang up.',
               style: TextStyle(fontSize: 14, color: AppTheme.textMuted.withOpacity(0.7), height: 1.5),
               textAlign: TextAlign.center,
             ),
@@ -332,38 +351,6 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
                 const SizedBox(width: 8),
                 Text('Connecting AI…', style: TextStyle(fontSize: 13, color: AppTheme.textMuted.withOpacity(0.8))),
               ]),
-            if (s == LlmState.error) ...[
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: AppTheme.accentRed.withOpacity(0.07),
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: AppTheme.accentRed.withOpacity(0.2)),
-                ),
-                child: Column(children: [
-                  Text(
-                    _llm?.errorMessage ?? 'Unknown error',
-                    style: const TextStyle(fontSize: 13, color: AppTheme.accentRed, height: 1.5),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 14),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: _retryConnection,
-                      icon: const Icon(Icons.refresh, size: 18),
-                      label: const Text('Retry Connection'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppTheme.primary,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      ),
-                    ),
-                  ),
-                ]),
-              ),
-            ],
           ]),
         ),
       );
@@ -371,53 +358,85 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
 
     return ListView.builder(
       controller: _scroll,
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-      itemCount: _msgs.length,
-      itemBuilder: (_, i) => _bubble(_msgs[i]),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 100), // extra bottom padding
+      itemCount: displayMsgs.length,
+      itemBuilder: (_, i) => _bubble(displayMsgs[i]),
     );
   }
 
   Widget _bubble(_Msg msg) {
     final isCaller = msg.type == _MsgType.callerQuestion;
-    final accent = isCaller ? AppTheme.textMuted : AppTheme.primary;
+    // WhatsApp Light Green for AI, White for Caller
+    final bg = isCaller ? Colors.white : const Color(0xFFDCF8C6); 
+    final align = isCaller ? Alignment.centerLeft : Alignment.centerRight;
+    
     return Align(
-      alignment: isCaller ? Alignment.centerLeft : Alignment.centerRight,
+      alignment: align,
       child: Container(
-        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.86),
-        margin: EdgeInsets.only(bottom: 10, left: isCaller ? 0 : 20, right: isCaller ? 20 : 0),
-        padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.76),
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
-          color: isCaller ? AppTheme.surfaceLightElevated : AppTheme.primary.withOpacity(0.08),
+          color: bg,
           borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(16), topRight: const Radius.circular(16),
-            bottomLeft: isCaller ? const Radius.circular(4) : const Radius.circular(16),
-            bottomRight: isCaller ? const Radius.circular(16) : const Radius.circular(4),
+            topLeft: const Radius.circular(12),
+            topRight: const Radius.circular(12),
+            bottomLeft: isCaller ? Radius.zero : const Radius.circular(12),
+            bottomRight: isCaller ? const Radius.circular(12) : Radius.zero,
           ),
-          border: Border.all(color: isCaller ? Colors.black.withOpacity(0.06) : AppTheme.primary.withOpacity(0.18)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.08),
+              blurRadius: 1,
+              offset: const Offset(0, 1),
+            )
+          ],
         ),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(isCaller ? Icons.person_outline : Icons.auto_awesome, size: 12, color: accent),
-            const SizedBox(width: 4),
-            Text(isCaller ? 'Interviewer' : 'AI Coach',
-                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: accent)),
-            if (msg.streaming) ...[
-              const SizedBox(width: 6),
-              SizedBox(width: 9, height: 9, child: CircularProgressIndicator(strokeWidth: 1.5, color: accent)),
-            ],
-          ]),
-          const SizedBox(height: 6),
-          Text(msg.text, style: TextStyle(
-            fontSize: 15, height: 1.45,
-            color: isCaller ? AppTheme.textSecondary : AppTheme.textPrimary,
-            fontWeight: isCaller ? FontWeight.w400 : FontWeight.w500,
-          )),
-          const SizedBox(height: 4),
-          Text(
-            '${msg.ts.hour.toString().padLeft(2, '0')}:${msg.ts.minute.toString().padLeft(2, '0')}',
-            style: TextStyle(fontSize: 10, color: AppTheme.textMuted.withOpacity(0.6)),
-          ),
-        ]),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end, 
+          mainAxisSize: MainAxisSize.min, 
+          children: [
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Flexible(
+                  child: Text(
+                    msg.text,
+                    style: const TextStyle(
+                      fontSize: 15, 
+                      color: Color(0xFF333333), 
+                      height: 1.4,
+                      fontWeight: FontWeight.w400,
+                    ),
+                  ),
+                ),
+                if (msg.streaming) ...[
+                  const SizedBox(width: 8),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: SizedBox(
+                      width: 12, height: 12,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.5,
+                        color: isCaller ? Colors.grey : AppTheme.primary,
+                      ),
+                    ),
+                  ),
+                ]
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '${msg.ts.hour.toString().padLeft(2, '0')}:${msg.ts.minute.toString().padLeft(2, '0')}',
+              style: TextStyle(
+                fontSize: 11, 
+                color: Colors.black.withOpacity(0.4),
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

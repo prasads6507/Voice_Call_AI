@@ -1,0 +1,7 @@
+No devices found yet. Checking for wireless devices...
+
+No supported devices found with name or id matching 'R9WT90T8XPE'.
+
+The following devices were found:
+macOS (desktop) • macos  • darwin-arm64   • macOS 26.3.1 25D2128 darwin-arm64
+Chrome (web)    • chrome • web-javascript • Google Chrome 146.0.7680.76

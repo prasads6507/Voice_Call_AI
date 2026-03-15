@@ -56,12 +56,17 @@ class LlmService extends ChangeNotifier {
 
   Timer? _silenceTimer;
   Timer? _setupTimer;
+  String _liveDraft = '';
+  String _lastFinalizedQuestion = '';
+  String _lastAnswerDraft = '';
+  bool _questionFinalizedForCurrentTurn = false;
+  final _client = http.Client();
 
   // ── Callbacks ──────────────────────────────────────────────────
-  Function(String)? onCallerSpeechUpdate;
-  Function(String)? onAIAnswerStreaming;
-  Function(String, String)? onTurnComplete;
-  Function(String)? onQuestionComplete;
+  void Function(String)? onCallerDraftUpdate;
+  void Function(String)? onCallerQuestionFinalized;
+  void Function(String)? onAIAnswerDraftUpdate;
+  void Function(String, String)? onTurnFinalized;
 
   // ── API constants ──────────────────────────────────────────────
   static const _wsUrl =
@@ -183,21 +188,29 @@ class LlmService extends ChangeNotifier {
 
     final msg = jsonEncode({
       'setup': {
-        'model': 'models/$_liveModel',
+        'model': 'models/gemini-2.5-flash-native-audio-preview-12-2025',
         'generationConfig': {
           'responseModalities': ['AUDIO'],
+          'speechConfig': {
+            'voiceConfig': {'prebuiltVoiceConfig': {'voiceName': 'Puck'}}
+          }
         },
-        'inputAudioTranscription': {},
-        'outputAudioTranscription': {},
         'systemInstruction': {
           'parts': [
             {
-              'text': 'You are a real-time interview assistant. '
-                  'Transcribe the interviewer audio and help generate short coaching answers. '
-                  'Resume context:\n$_resumeText'
+              'text': '''
+You are a real-time interview assistant.
+Always interpret caller speech into clear natural English.
+Even if caller audio contains another language, produce English transcription for UI and downstream processing.
+All coaching answers must be in English only.
+Resume context:
+$_resumeText
+'''
             }
           ]
         },
+        'inputAudioTranscription': {'model': 'models/speech-001'},
+        'outputAudioTranscription': {'model': 'models/speech-001'}
       }
     });
 
@@ -297,41 +310,47 @@ class LlmService extends ChangeNotifier {
       }
 
       if (extractedText.isNotEmpty) {
-        _turnText = extractedText; // use latest full text instead of unsafe append
+        _liveDraft = extractedText;
         if (_state != LlmState.generating) {
           _state = LlmState.transcribing;
         }
-        debugPrint('[LLM] 🎤 "$extractedText"');
-        onCallerSpeechUpdate?.call(_turnText);
-        _scheduleFinalizeFromSilence();
+        debugPrint('[LLM] 🎤 (draft) "$extractedText"');
+        onCallerDraftUpdate?.call(_liveDraft);
+        _restartSilenceTimer();
         notifyListeners();
       }
 
-      // ── generationComplete → generate coaching answer ─────────
+      // ── Finalization Signals ─────────────────────────────────
       if (sc['generationComplete'] == true) {
-        debugPrint('[LLM] ⚡ generationComplete seen');
-        _finalizeQuestionAndAnswer('generationComplete');
+        debugPrint('[LLM] ⚡ generationComplete');
+        _finalizeQuestion('generationComplete');
       }
-
-      // ── turnComplete ──────────────────────────────────────────
       if (sc['turnComplete'] == true) {
-        debugPrint('[LLM] ⚡ turnComplete seen');
-        _finalizeQuestionAndAnswer('turnComplete');
+        debugPrint('[LLM] ⚡ turnComplete');
+        _finalizeQuestion('turnComplete');
       }
     } catch (e, st) {
       debugPrint('[LLM] onMsg error: $e\n$st');
     }
   }
 
-  void _scheduleFinalizeFromSilence() {
+  void _restartSilenceTimer() {
     _silenceTimer?.cancel();
     _silenceTimer = Timer(const Duration(milliseconds: 1400), () {
-      _finalizeQuestionAndAnswer('silence-timeout');
+      _finalizeQuestion('silence-timeout');
     });
   }
 
-  void _finalizeQuestionAndAnswer(String source) {
-    final question = _turnText.trim();
+  String _cleanTranscript(String input) {
+    return input
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .replaceAll(' .', '.')
+        .replaceAll(' ,', ',')
+        .trim();
+  }
+
+  void _finalizeQuestion(String source) {
+    final question = _cleanTranscript(_liveDraft);
     if (question.isEmpty) {
       if (_state == LlmState.transcribing) {
         _state = LlmState.ready;
@@ -339,11 +358,18 @@ class LlmService extends ChangeNotifier {
       }
       return;
     }
-    if (_state == LlmState.generating) return;
+    if (_questionFinalizedForCurrentTurn) return;
+    if (question == _lastFinalizedQuestion && source == 'silence-timeout') return;
 
-    debugPrint('[LLM] Finalizing question from $source → "$question"');
+    _questionFinalizedForCurrentTurn = true;
+    _lastFinalizedQuestion = question;
+    _liveDraft = '';
+    _turnText = ''; // legacy keep
     _silenceTimer?.cancel();
-    _turnText = '';
+
+    debugPrint('[LLM] Finalized question from $source: $question');
+    onCallerQuestionFinalized?.call(question);
+
     _state = LlmState.generating;
     notifyListeners();
     _generateAnswer(question);
@@ -399,86 +425,67 @@ class LlmService extends ChangeNotifier {
   // ══════════════════════════════════════════════════════════════
 
   Future<void> _generateAnswer(String question) async {
-    final url = Uri.parse(
-        '$_httpBase/$_answerModel:streamGenerateContent?key=$_apiKey&alt=sse');
-
-    final ctx = <Map<String, dynamic>>[];
-    for (final t in _history.take(8)) {
-      ctx
-        ..add({'role': 'user', 'parts': [{'text': t['question']}]})
-        ..add({'role': 'model', 'parts': [{'text': t['answer']}]});
-    }
-
-    final body = jsonEncode({
-      'system_instruction': {
-        'parts': [
-          {
-            'text': 'You are a stealth real-time interview coach.\n'
-                'The candidate is on a live phone interview right now.\n'
-                'Given what the interviewer said, provide a short suggested answer.\n'
-                'FORMAT: Start with 💡 then 2-3 natural sentences. Under 60 words. No preamble.\n'
-                'Resume:\n$_resumeText'
-          }
-        ]
-      },
-      'contents': [
-        ...ctx,
-        {'role': 'user', 'parts': [{'text': question}]},
-      ],
-      'generationConfig': {'temperature': 0.7, 'maxOutputTokens': 200},
-    });
-
-    String full = '';
     try {
-      final req = http.Request('POST', url)
-        ..headers['Content-Type'] = 'application/json'
-        ..body = body;
+      _lastAnswerDraft = '';
+      final prompt = '''
+You are an interview coaching assistant.
 
-      final resp = await http.Client().send(req);
+Rules:
+- Respond only in English.
+- Even if the user question originates from another language, answer only in English.
+- Return a complete, polished paragraph, not fragments.
+- Keep the answer concise, interview-ready, and natural.
+- Do not return bullet fragments unless explicitly needed.
 
-      if (resp.statusCode != 200) {
-        final err = await resp.stream.bytesToString();
-        debugPrint('[LLM] Answer HTTP ${resp.statusCode}: $err');
-        _state = LlmState.ready;
-        notifyListeners();
-        return;
+Question:
+$question
+
+Resume context:
+$_resumeText
+''';
+
+      final url = Uri.parse('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse&key=$_apiKey');
+      final request = http.Request('POST', url);
+      request.headers['Content-Type'] = 'application/json';
+      request.body = jsonEncode({
+        'contents': [
+          {'role': 'user', 'parts': [{'text': prompt}]}
+        ],
+        'generationConfig': {'temperature': 0.4}
+      });
+
+      final response = await _client.send(request);
+      final stream = response.stream.transform(utf8.decoder).transform(const LineSplitter());
+
+      String fullAnswer = '';
+      await for (final line in stream) {
+        if (line.startsWith('data: ')) {
+          final jsonStr = line.substring(6);
+          if (jsonStr == '[DONE]') break;
+          try {
+            final data = jsonDecode(jsonStr);
+            final text = data['candidates'][0]['content']['parts'][0]['text'] as String;
+            fullAnswer += text;
+            _lastAnswerDraft = fullAnswer;
+            onAIAnswerDraftUpdate?.call(_lastAnswerDraft);
+          } catch (_) {}
+        }
       }
 
-      debugPrint('[LLM] Answer stream started…');
-
-      await for (final line in resp.stream
-          .transform(utf8.decoder)
-          .transform(const LineSplitter())) {
-        if (!line.startsWith('data: ')) continue;
-        final payload = line.substring(6).trim();
-        if (payload.isEmpty || payload == '[DONE]') continue;
-        try {
-          final j = jsonDecode(payload) as Map<String, dynamic>;
-          final cands = j['candidates'] as List?;
-          if (cands == null || cands.isEmpty) continue;
-          final parts = (cands[0]['content']?['parts']) as List?;
-          for (final p in parts ?? []) {
-            final t = (p as Map)['text'] as String?;
-            if (t != null && t.isNotEmpty) {
-              full += t;
-              onAIAnswerStreaming?.call(full);
-            }
-          }
-        } catch (_) {}
-      }
-
-      if (full.trim().isNotEmpty) {
-        debugPrint('[LLM] Answer stream completed. Length: ${full.length}');
-        _history.insert(0, {'question': question, 'answer': full.trim()});
+      final cleanAnswer = fullAnswer.trim();
+      if (cleanAnswer.isNotEmpty) {
+        _history.insert(0, {'question': question, 'answer': cleanAnswer});
         if (_history.length > 20) _history.removeLast();
-        onTurnComplete?.call(question, full.trim());
-        onQuestionComplete?.call(question);
+        onTurnFinalized?.call(question, cleanAnswer);
       }
+      
+      _questionFinalizedForCurrentTurn = false;
       _state = LlmState.ready;
       notifyListeners();
     } catch (e) {
-      debugPrint('[LLM] Answer error: $e');
+      debugPrint('[LLM] Generate error: $e');
       _state = LlmState.ready;
+      _questionFinalizedForCurrentTurn = false;
       notifyListeners();
     }
   }
@@ -540,7 +547,13 @@ class LlmService extends ChangeNotifier {
   // ══════════════════════════════════════════════════════════════
 
   void clearSession() {
+    _silenceTimer?.cancel();
+    _liveDraft = '';
+    _lastAnswerDraft = '';
+    _lastFinalizedQuestion = '';
+    _questionFinalizedForCurrentTurn = false;
     _turnText = '';
+    _history.clear();
     _state = _sessionReady ? LlmState.ready : LlmState.unloaded;
     notifyListeners();
   }

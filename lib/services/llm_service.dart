@@ -156,10 +156,13 @@ class LlmService extends ChangeNotifier {
         'systemInstruction': {
           'parts': [
             {
-              'text': 'You are a real-time interview assistant.\n'
-                  'Always interpret caller speech into clear natural English.\n'
-                  'Even if caller audio contains another language, produce English transcription for UI and downstream processing.\n'
-                  'All coaching answers must be in English only.\n'
+              'text': 'You are a professional real-time interview assistant.\n\n'
+                  'Rules:\n'
+                  '- Always transcribe the caller\'s speech into English only.\n'
+                  '- Even if the caller speaks in Telugu or any other language, output the transcription in English only.\n'
+                  '- Caller question transcription is for UI display only.\n'
+                  '- AI answers must be generated separately and must always be in English.\n'
+                  '- Keep interview answers professional, relevant, and concise.\n'
                   'Resume context:\n$_resumeText'
             }
           ]
@@ -237,37 +240,39 @@ class LlmService extends ChangeNotifier {
       final sc = data['serverContent'] as Map<String, dynamic>?;
       if (sc == null) return;
 
-      String extractedText = '';
-
+      // 1. Handle Caller (inputTranscription)
       final inputTx = sc['inputTranscription'] as Map<String, dynamic>?;
       if (inputTx != null) {
-        extractedText = _extractTranscriptText(inputTx);
-      }
-
-      if (extractedText.isEmpty) {
-        final modelTurn = sc['modelTurn'] as Map<String, dynamic>?;
-        if (modelTurn != null) {
-          extractedText = _extractTranscriptText(modelTurn);
+        final text = _extractTranscriptText(inputTx);
+        if (text.isNotEmpty) {
+          _liveDraft = _mergeTranscript(_liveDraft, text);
+          if (_state != LlmState.generating) {
+            _state = LlmState.transcribing;
+          }
+          _questionFinalizedForCurrentTurn = false;
+          debugPrint('[LLM] 🎤 Caller Draft: "$_liveDraft"');
+          onCallerDraftUpdate?.call(_liveDraft);
+          _restartSilenceTimer();
+          notifyListeners();
         }
       }
 
-      if (extractedText.isEmpty) {
+      // 2. Handle AI (modelTurn / outputTranscription)
+      String aiText = '';
+      final modelTurn = sc['modelTurn'] as Map<String, dynamic>?;
+      if (modelTurn != null) {
+        aiText = _extractTranscriptText(modelTurn);
+      }
+      if (aiText.isEmpty) {
         final outputTx = sc['outputTranscription'] as Map<String, dynamic>?;
         if (outputTx != null) {
-          extractedText = _extractTranscriptText(outputTx);
+          aiText = _extractTranscriptText(outputTx);
         }
       }
 
-      if (extractedText.isNotEmpty) {
-        _liveDraft = _mergeTranscript(_liveDraft, extractedText);
-        if (_state != LlmState.generating) {
-          _state = LlmState.transcribing;
-        }
-        _questionFinalizedForCurrentTurn = false;
-        debugPrint('[LLM] 🎤 (draft) "$_liveDraft"');
-        onCallerDraftUpdate?.call(_liveDraft);
-        _restartSilenceTimer();
-        notifyListeners();
+      if (aiText.isNotEmpty) {
+        debugPrint('[LLM] 🤖 AI Draft: "$aiText"');
+        onAIAnswerDraftUpdate?.call(aiText);
       }
 
       // ── generationComplete → finalize ─────────
@@ -395,15 +400,15 @@ class LlmService extends ChangeNotifier {
     }
 
     final prompt = '''
-You are an interview coaching assistant.
+You are a professional interview coaching assistant.
 
 Rules:
 - Respond only in English.
-- Even if the user question originates from another language, answer only in English.
-- Rewrite the spoken question into clean English understanding internally.
+- Even if the user question originates from another language or contains non-English terms, answer only in English.
+- Rewrite the spoken question into clean, professional English understanding internally.
 - Return a complete, polished paragraph, not fragments.
-- Keep the answer concise, interview-ready, and natural.
-- Do not return bullet fragments unless explicitly needed.
+- Keep the answer concise, relevant, and professional.
+- Do not return bullet fragments unless explicitly requested.
 
 Question:
 $question

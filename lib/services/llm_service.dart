@@ -8,36 +8,6 @@ import 'storage_service.dart';
 
 enum LlmState { unloaded, connecting, ready, transcribing, generating, error }
 
-/// ═══════════════════════════════════════════════════════════════════
-///  THE BUG — confirmed by the on-screen error message:
-///
-///  "Unknown name "inputAudioTranscription" at
-///   'setup.generation_config': Cannot find field."
-///
-///  inputAudioTranscription is a field of BidiGenerateContentSetup,
-///  NOT a field of GenerationConfig. It must sit at the TOP LEVEL of
-///  the "setup" object, alongside "generationConfig" — not inside it.
-///
-///  ❌ WRONG (what we were sending every time):
-///  {
-///    "setup": {
-///      "generationConfig": {
-///        "responseModalities": ["AUDIO"],
-///        "inputAudioTranscription": {}   ← WRONG nesting level
-///      }
-///    }
-///  }
-///
-///  ✅ CORRECT (this is the fix):
-///  {
-///    "setup": {
-///      "generationConfig": {
-///        "responseModalities": ["AUDIO"]
-///      },
-///      "inputAudioTranscription": {}     ← TOP level of setup
-///    }
-///  }
-/// ═══════════════════════════════════════════════════════════════════
 class LlmService extends ChangeNotifier {
   LlmState _state = LlmState.unloaded;
   String _error = '';
@@ -51,22 +21,20 @@ class LlmService extends ChangeNotifier {
   int _reconnects = 0;
   static const _maxReconnects = 3;
 
-  String _turnText = '';
-  final List<Map<String, String>> _history = [];
-
-  Timer? _silenceTimer;
-  Timer? _setupTimer;
   String _liveDraft = '';
   String _lastFinalizedQuestion = '';
   String _lastAnswerDraft = '';
   bool _questionFinalizedForCurrentTurn = false;
-  final _client = http.Client();
+  final List<Map<String, String>> _history = [];
+
+  Timer? _silenceTimer;
+  Timer? _setupTimer;
 
   // ── Callbacks ──────────────────────────────────────────────────
-  void Function(String)? onCallerDraftUpdate;
-  void Function(String)? onCallerQuestionFinalized;
-  void Function(String)? onAIAnswerDraftUpdate;
-  void Function(String, String)? onTurnFinalized;
+  void Function(String text)? onCallerDraftUpdate;
+  void Function(String question)? onCallerQuestionFinalized;
+  void Function(String text)? onAIAnswerDraftUpdate;
+  void Function(String question, String answer)? onTurnFinalized;
 
   // ── API constants ──────────────────────────────────────────────
   static const _wsUrl =
@@ -84,7 +52,6 @@ class LlmService extends ChangeNotifier {
   // ── Getters ────────────────────────────────────────────────────
   LlmState get state => _state;
   String get errorMessage => _error;
-  String get currentTranscription => _turnText;
   bool get isConnected =>
       _state == LlmState.ready ||
       _state == LlmState.transcribing ||
@@ -100,7 +67,10 @@ class LlmService extends ChangeNotifier {
 
     _state = LlmState.connecting;
     _resumeText = resumeText;
-    _turnText = '';
+    _liveDraft = '';
+    _lastFinalizedQuestion = '';
+    _lastAnswerDraft = '';
+    _questionFinalizedForCurrentTurn = false;
     _closedByUser = false;
     _reconnects = 0;
     notifyListeners();
@@ -164,18 +134,7 @@ class LlmService extends ChangeNotifier {
   }
 
   // ══════════════════════════════════════════════════════════════
-  //  SETUP — THE FIX IS HERE
-  //
-  //  BidiGenerateContentSetup proto fields:
-  //    setup.model                   ← model name
-  //    setup.generationConfig        ← GenerationConfig (responseModalities etc)
-  //    setup.systemInstruction       ← system prompt
-  //    setup.inputAudioTranscription ← AudioTranscriptionConfig (TOP LEVEL)
-  //    setup.outputAudioTranscription← AudioTranscriptionConfig (TOP LEVEL)
-  //    setup.tools                   ← tools array
-  //
-  //  inputAudioTranscription is NOT inside generationConfig.
-  //  It is a sibling of generationConfig under setup.
+  //  SETUP
   // ══════════════════════════════════════════════════════════════
   void _sendSetup() {
     _setupTimer?.cancel();
@@ -188,29 +147,23 @@ class LlmService extends ChangeNotifier {
 
     final msg = jsonEncode({
       'setup': {
-        'model': 'models/gemini-2.5-flash-native-audio-preview-12-2025',
+        'model': 'models/$_liveModel',
         'generationConfig': {
           'responseModalities': ['AUDIO'],
-          'speechConfig': {
-            'voiceConfig': {'prebuiltVoiceConfig': {'voiceName': 'Puck'}}
-          }
         },
+        'inputAudioTranscription': {},
+        'outputAudioTranscription': {},
         'systemInstruction': {
           'parts': [
             {
-              'text': '''
-You are a real-time interview assistant.
-Always interpret caller speech into clear natural English.
-Even if caller audio contains another language, produce English transcription for UI and downstream processing.
-All coaching answers must be in English only.
-Resume context:
-$_resumeText
-'''
+              'text': 'You are a real-time interview assistant.\n'
+                  'Always interpret caller speech into clear natural English.\n'
+                  'Even if caller audio contains another language, produce English transcription for UI and downstream processing.\n'
+                  'All coaching answers must be in English only.\n'
+                  'Resume context:\n$_resumeText'
             }
           ]
         },
-        'inputAudioTranscription': {'model': 'models/speech-001'},
-        'outputAudioTranscription': {'model': 'models/speech-001'}
       }
     });
 
@@ -261,8 +214,6 @@ $_resumeText
         return;
       }
 
-      debugPrint('[LLM] RAW MESSAGE: $text');
-
       final data = jsonDecode(text) as Map<String, dynamic>;
 
       if (data['error'] != null) {
@@ -288,13 +239,11 @@ $_resumeText
 
       String extractedText = '';
 
-      // Path 1: current path
       final inputTx = sc['inputTranscription'] as Map<String, dynamic>?;
       if (inputTx != null) {
         extractedText = _extractTranscriptText(inputTx);
       }
 
-      // Path 2: fallback shapes
       if (extractedText.isEmpty) {
         final modelTurn = sc['modelTurn'] as Map<String, dynamic>?;
         if (modelTurn != null) {
@@ -314,19 +263,22 @@ $_resumeText
         if (_state != LlmState.generating) {
           _state = LlmState.transcribing;
         }
-        debugPrint('[LLM] 🎤 (draft) "$extractedText"');
+        _questionFinalizedForCurrentTurn = false;
+        debugPrint('[LLM] 🎤 (draft) "$_liveDraft"');
         onCallerDraftUpdate?.call(_liveDraft);
         _restartSilenceTimer();
         notifyListeners();
       }
 
-      // ── Finalization Signals ─────────────────────────────────
+      // ── generationComplete → finalize ─────────
       if (sc['generationComplete'] == true) {
-        debugPrint('[LLM] ⚡ generationComplete');
+        debugPrint('[LLM] ⚡ generationComplete seen');
         _finalizeQuestion('generationComplete');
       }
+
+      // ── turnComplete → finalize ─────────────────────────────────
       if (sc['turnComplete'] == true) {
-        debugPrint('[LLM] ⚡ turnComplete');
+        debugPrint('[LLM] ⚡ turnComplete seen');
         _finalizeQuestion('turnComplete');
       }
     } catch (e, st) {
@@ -359,15 +311,15 @@ $_resumeText
       return;
     }
     if (_questionFinalizedForCurrentTurn) return;
-    if (question == _lastFinalizedQuestion && source == 'silence-timeout') return;
+    if (question == _lastFinalizedQuestion) return;
 
     _questionFinalizedForCurrentTurn = true;
     _lastFinalizedQuestion = question;
     _liveDraft = '';
-    _turnText = ''; // legacy keep
-    _silenceTimer?.cancel();
 
-    debugPrint('[LLM] Finalized question from $source: $question');
+    debugPrint('[LLM] Finalizing question from $source → "$question"');
+    _silenceTimer?.cancel();
+    
     onCallerQuestionFinalized?.call(question);
 
     _state = LlmState.generating;
@@ -425,14 +377,23 @@ $_resumeText
   // ══════════════════════════════════════════════════════════════
 
   Future<void> _generateAnswer(String question) async {
-    try {
-      _lastAnswerDraft = '';
-      final prompt = '''
+    final url = Uri.parse(
+        '$_httpBase/$_answerModel:streamGenerateContent?key=$_apiKey&alt=sse');
+
+    final ctx = <Map<String, dynamic>>[];
+    for (final t in _history.take(8)) {
+      ctx
+        ..add({'role': 'user', 'parts': [{'text': t['question']}]})
+        ..add({'role': 'model', 'parts': [{'text': t['answer']}]});
+    }
+
+    final prompt = '''
 You are an interview coaching assistant.
 
 Rules:
 - Respond only in English.
 - Even if the user question originates from another language, answer only in English.
+- Rewrite the spoken question into clean English understanding internally.
 - Return a complete, polished paragraph, not fragments.
 - Keep the answer concise, interview-ready, and natural.
 - Do not return bullet fragments unless explicitly needed.
@@ -444,48 +405,68 @@ Resume context:
 $_resumeText
 ''';
 
-      final url = Uri.parse('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse&key=$_apiKey');
-      final request = http.Request('POST', url);
-      request.headers['Content-Type'] = 'application/json';
-      request.body = jsonEncode({
-        'contents': [
-          {'role': 'user', 'parts': [{'text': prompt}]}
-        ],
-        'generationConfig': {'temperature': 0.4}
-      });
+    final body = jsonEncode({
+      'contents': [
+        ...ctx,
+        {'role': 'user', 'parts': [{'text': prompt}]},
+      ],
+      'generationConfig': {'temperature': 0.7, 'maxOutputTokens': 200},
+    });
 
-      final response = await _client.send(request);
-      final stream = response.stream.transform(utf8.decoder).transform(const LineSplitter());
+    _lastAnswerDraft = '';
 
-      String fullAnswer = '';
-      await for (final line in stream) {
-        if (line.startsWith('data: ')) {
-          final jsonStr = line.substring(6);
-          if (jsonStr == '[DONE]') break;
-          try {
-            final data = jsonDecode(jsonStr);
-            final text = data['candidates'][0]['content']['parts'][0]['text'] as String;
-            fullAnswer += text;
-            _lastAnswerDraft = fullAnswer;
-            onAIAnswerDraftUpdate?.call(_lastAnswerDraft);
-          } catch (_) {}
-        }
+    try {
+      final req = http.Request('POST', url)
+        ..headers['Content-Type'] = 'application/json'
+        ..body = body;
+
+      final resp = await http.Client().send(req);
+
+      if (resp.statusCode != 200) {
+        final err = await resp.stream.bytesToString();
+        debugPrint('[LLM] Answer HTTP ${resp.statusCode}: $err');
+        _state = LlmState.ready;
+        notifyListeners();
+        return;
       }
 
-      final cleanAnswer = fullAnswer.trim();
-      if (cleanAnswer.isNotEmpty) {
-        _history.insert(0, {'question': question, 'answer': cleanAnswer});
+      debugPrint('[LLM] Answer stream started…');
+
+      await for (final line in resp.stream
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())) {
+        if (!line.startsWith('data: ')) continue;
+        final payload = line.substring(6).trim();
+        if (payload.isEmpty || payload == '[DONE]') continue;
+        try {
+          final j = jsonDecode(payload) as Map<String, dynamic>;
+          final cands = j['candidates'] as List?;
+          if (cands == null || cands.isEmpty) continue;
+          final parts = (cands[0]['content']?['parts']) as List?;
+          for (final p in parts ?? []) {
+            final t = (p as Map)['text'] as String?;
+            if (t != null && t.isNotEmpty) {
+              _lastAnswerDraft += t;
+              onAIAnswerDraftUpdate?.call(_lastAnswerDraft);
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (_lastAnswerDraft.trim().isNotEmpty) {
+        debugPrint('[LLM] Answer stream completed. Length: ${_lastAnswerDraft.length}');
+        _history.insert(0, {'question': question, 'answer': _lastAnswerDraft.trim()});
         if (_history.length > 20) _history.removeLast();
-        onTurnFinalized?.call(question, cleanAnswer);
+        
+        onTurnFinalized?.call(question, _lastAnswerDraft.trim());
       }
-      
+      _lastAnswerDraft = '';
       _questionFinalizedForCurrentTurn = false;
       _state = LlmState.ready;
       notifyListeners();
     } catch (e) {
-      debugPrint('[LLM] Generate error: $e');
+      debugPrint('[LLM] Answer error: $e');
       _state = LlmState.ready;
-      _questionFinalizedForCurrentTurn = false;
       notifyListeners();
     }
   }
@@ -547,13 +528,10 @@ $_resumeText
   // ══════════════════════════════════════════════════════════════
 
   void clearSession() {
-    _silenceTimer?.cancel();
     _liveDraft = '';
-    _lastAnswerDraft = '';
     _lastFinalizedQuestion = '';
+    _lastAnswerDraft = '';
     _questionFinalizedForCurrentTurn = false;
-    _turnText = '';
-    _history.clear();
     _state = _sessionReady ? LlmState.ready : LlmState.unloaded;
     notifyListeners();
   }
@@ -567,7 +545,7 @@ $_resumeText
     _ws?.sink.close();
     _ws = null;
     _sessionReady = false;
-    _turnText = '';
+    _liveDraft = '';
     _state = LlmState.unloaded;
     notifyListeners();
   }

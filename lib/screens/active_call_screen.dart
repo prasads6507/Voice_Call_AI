@@ -13,10 +13,9 @@ enum _MsgType { callerQuestion, aiAnswer }
 
 class _Msg {
   final _MsgType type;
-  String text;
+  final String text;
   final DateTime ts;
-  bool streaming;
-  _Msg({required this.type, required this.text, this.streaming = false})
+  _Msg({required this.type, required this.text})
       : ts = DateTime.now();
 }
 
@@ -35,12 +34,13 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
   Timer? _timer;
   Duration _elapsed = Duration.zero;
   String _resume = '';
-  // Prevents double Navigator.pop → black screen crash
-  final List<_Msg> _msgs = [];
-  bool _didHangUp = false;
-
+  
   String? _callerDraft;
   String? _aiDraft;
+  final List<_Msg> _msgs = [];
+
+  // Prevents double Navigator.pop → black screen crash
+  bool _didHangUp = false;
 
   @override
   void initState() {
@@ -112,6 +112,8 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
   Future<void> _retryConnection() async {
     if (_llm == null) return;
     _msgs.clear();
+    _callerDraft = null;
+    _aiDraft = null;
     _llm!.disconnect();
     await Future.delayed(const Duration(milliseconds: 300));
     await _llm!.initialize(resumeText: _resume);
@@ -136,8 +138,8 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
         _msgs.add(_Msg(
           type: _MsgType.callerQuestion,
           text: question,
-          streaming: false,
         ));
+        _aiDraft = ''; // optionally prime the AI draft state
       });
       _scrollDown();
     };
@@ -157,7 +159,6 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
         _msgs.add(_Msg(
           type: _MsgType.aiAnswer,
           text: answer,
-          streaming: false,
         ));
       });
       _scrollDown();
@@ -317,18 +318,8 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
   // ── Chat ─────────────────────────────────────────────────────────
 
   Widget _chat() {
-    final s = _llm?.state ?? LlmState.connecting;
-    
-    // Build a helper list for the ListView
-    final displayMsgs = [..._msgs];
-    if (_callerDraft != null && _callerDraft!.isNotEmpty) {
-      displayMsgs.add(_Msg(type: _MsgType.callerQuestion, text: _callerDraft!, streaming: true));
-    }
-    if (_aiDraft != null) {
-      displayMsgs.add(_Msg(type: _MsgType.aiAnswer, text: _aiDraft!, streaming: true));
-    }
-
-    if (displayMsgs.isEmpty) {
+    if (_msgs.isEmpty && _callerDraft == null && _aiDraft == null) {
+      final s = _llm?.state ?? LlmState.connecting;
       return Center(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 28),
@@ -340,7 +331,7 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
                 textAlign: TextAlign.center),
             const SizedBox(height: 8),
             Text(
-              'Interview audio translates to English chat bubbles here.\nMessages are cleared when you hang up.',
+              'Interview audio translates to chat bubbles here.\nMessages are cleared when you hang up.',
               style: TextStyle(fontSize: 14, color: AppTheme.textMuted.withOpacity(0.7), height: 1.5),
               textAlign: TextAlign.center,
             ),
@@ -356,16 +347,46 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
       );
     }
 
+    final itemCount = _msgs.length + (_callerDraft != null ? 1 : 0) + (_aiDraft != null ? 1 : 0);
+
     return ListView.builder(
       controller: _scroll,
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 100), // extra bottom padding
-      itemCount: displayMsgs.length,
-      itemBuilder: (_, i) => _bubble(displayMsgs[i]),
+      padding: const EdgeInsets.fromLTRB(12, 16, 12, 16),
+      itemCount: itemCount,
+      itemBuilder: (_, i) {
+        if (i < _msgs.length) {
+          return _bubble(
+            type: _msgs[i].type,
+            text: _msgs[i].text,
+            ts: _msgs[i].ts,
+            streaming: false,
+          );
+        } else if (i == _msgs.length && _callerDraft != null) {
+          return _bubble(
+            type: _MsgType.callerQuestion,
+            text: _callerDraft!,
+            ts: DateTime.now(),
+            streaming: true,
+          );
+        } else {
+          return _bubble(
+            type: _MsgType.aiAnswer,
+            text: _aiDraft ?? '',
+            ts: DateTime.now(),
+            streaming: true,
+          );
+        }
+      },
     );
   }
 
-  Widget _bubble(_Msg msg) {
-    final isCaller = msg.type == _MsgType.callerQuestion;
+  Widget _bubble({
+    required _MsgType type, 
+    required String text, 
+    required DateTime ts, 
+    required bool streaming
+  }) {
+    final isCaller = type == _MsgType.callerQuestion;
     // WhatsApp Light Green for AI, White for Caller
     final bg = isCaller ? Colors.white : const Color(0xFFDCF8C6); 
     final align = isCaller ? Alignment.centerLeft : Alignment.centerRight;
@@ -375,19 +396,19 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
       child: Container(
         constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.76),
         margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         decoration: BoxDecoration(
           color: bg,
           borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(12),
-            topRight: const Radius.circular(12),
-            bottomLeft: isCaller ? Radius.zero : const Radius.circular(12),
-            bottomRight: isCaller ? const Radius.circular(12) : Radius.zero,
+            topLeft: const Radius.circular(16),
+            topRight: const Radius.circular(16),
+            bottomLeft: isCaller ? Radius.zero : const Radius.circular(16),
+            bottomRight: isCaller ? const Radius.circular(16) : Radius.zero,
           ),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.08),
-              blurRadius: 1,
+              color: Colors.black.withOpacity(0.06),
+              blurRadius: 2,
               offset: const Offset(0, 1),
             )
           ],
@@ -402,16 +423,16 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
               children: [
                 Flexible(
                   child: Text(
-                    msg.text,
+                    text,
                     style: const TextStyle(
-                      fontSize: 15, 
-                      color: Color(0xFF333333), 
+                      fontSize: 16, 
+                      color: Color(0xFF222222), 
                       height: 1.4,
                       fontWeight: FontWeight.w400,
                     ),
                   ),
                 ),
-                if (msg.streaming) ...[
+                if (streaming) ...[
                   const SizedBox(width: 8),
                   Padding(
                     padding: const EdgeInsets.only(top: 4),
@@ -426,9 +447,9 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
                 ]
               ],
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 6),
             Text(
-              '${msg.ts.hour.toString().padLeft(2, '0')}:${msg.ts.minute.toString().padLeft(2, '0')}',
+              '${ts.hour.toString().padLeft(2, '0')}:${ts.minute.toString().padLeft(2, '0')}',
               style: TextStyle(
                 fontSize: 11, 
                 color: Colors.black.withOpacity(0.4),

@@ -45,7 +45,7 @@ class LlmService extends ChangeNotifier {
   static const _liveModel =
       'gemini-2.5-flash-native-audio-preview-12-2025';
 
-  static const _answerModel = 'gemini-2.0-flash-lite';
+  static const _answerModel = 'gemini-2.5-flash-lite';
   static const _httpBase =
       'https://generativelanguage.googleapis.com/v1beta/models';
 
@@ -152,7 +152,6 @@ class LlmService extends ChangeNotifier {
           'responseModalities': ['AUDIO'],
         },
         'inputAudioTranscription': {},
-        'outputAudioTranscription': {},
         'systemInstruction': {
           'parts': [
             {
@@ -161,8 +160,7 @@ class LlmService extends ChangeNotifier {
                   '- Always transcribe the caller\'s speech into English only.\n'
                   '- Even if the caller speaks in Telugu or any other language, output the transcription in English only.\n'
                   '- Caller question transcription is for UI display only.\n'
-                  '- AI answers must be generated separately and must always be in English.\n'
-                  '- Keep interview answers professional, relevant, and concise.\n'
+                  '- AI answers will be generated separately.\n'
                   'Resume context:\n$_resumeText'
             }
           ]
@@ -240,7 +238,7 @@ class LlmService extends ChangeNotifier {
       final sc = data['serverContent'] as Map<String, dynamic>?;
       if (sc == null) return;
 
-      // 1. Handle Caller (inputTranscription)
+      // 1. Handle Caller (inputTranscription) - ONLY path from WebSocket
       final inputTx = sc['inputTranscription'] as Map<String, dynamic>?;
       if (inputTx != null) {
         final text = _extractTranscriptText(inputTx);
@@ -255,24 +253,6 @@ class LlmService extends ChangeNotifier {
           _restartSilenceTimer();
           notifyListeners();
         }
-      }
-
-      // 2. Handle AI (modelTurn / outputTranscription)
-      String aiText = '';
-      final modelTurn = sc['modelTurn'] as Map<String, dynamic>?;
-      if (modelTurn != null) {
-        aiText = _extractTranscriptText(modelTurn);
-      }
-      if (aiText.isEmpty) {
-        final outputTx = sc['outputTranscription'] as Map<String, dynamic>?;
-        if (outputTx != null) {
-          aiText = _extractTranscriptText(outputTx);
-        }
-      }
-
-      if (aiText.isNotEmpty) {
-        debugPrint('[LLM] 🤖 AI Draft: "$aiText"');
-        onAIAnswerDraftUpdate?.call(aiText);
       }
 
       // ── generationComplete → finalize ─────────
@@ -390,13 +370,24 @@ class LlmService extends ChangeNotifier {
 
   Future<void> _generateAnswer(String question) async {
     final url = Uri.parse(
-        '$_httpBase/$_answerModel:streamGenerateContent?key=$_apiKey&alt=sse');
+      '$_httpBase/$_answerModel:streamGenerateContent?key=$_apiKey&alt=sse',
+    );
 
     final ctx = <Map<String, dynamic>>[];
     for (final t in _history.take(8)) {
       ctx
-        ..add({'role': 'user', 'parts': [{'text': t['question']}]})
-        ..add({'role': 'model', 'parts': [{'text': t['answer']}]});
+        ..add({
+          'role': 'user',
+          'parts': [
+            {'text': t['question']}
+          ]
+        })
+        ..add({
+          'role': 'model',
+          'parts': [
+            {'text': t['answer']}
+          ]
+        });
     }
 
     final prompt = '''
@@ -405,10 +396,8 @@ You are a professional interview coaching assistant.
 Rules:
 - Respond only in English.
 - Even if the user question originates from another language or contains non-English terms, answer only in English.
-- Rewrite the spoken question into clean, professional English understanding internally.
 - Return a complete, polished paragraph, not fragments.
 - Keep the answer concise, relevant, and professional.
-- Do not return bullet fragments unless explicitly requested.
 
 Question:
 $question
@@ -420,12 +409,21 @@ $_resumeText
     final body = jsonEncode({
       'contents': [
         ...ctx,
-        {'role': 'user', 'parts': [{'text': prompt}]},
+        {
+          'role': 'user',
+          'parts': [
+            {'text': prompt}
+          ]
+        }
       ],
-      'generationConfig': {'temperature': 0.7, 'maxOutputTokens': 200},
+      'generationConfig': {
+        'temperature': 0.7,
+        'maxOutputTokens': 200,
+      },
     });
 
     _lastAnswerDraft = '';
+    onAIAnswerDraftUpdate?.call('Thinking...');
 
     try {
       final req = http.Request('POST', url)
@@ -437,6 +435,12 @@ $_resumeText
       if (resp.statusCode != 200) {
         final err = await resp.stream.bytesToString();
         debugPrint('[LLM] Answer HTTP ${resp.statusCode}: $err');
+
+        final visibleError =
+            'Answer generation failed (${resp.statusCode}). Please retry.';
+        onAIAnswerDraftUpdate?.call(visibleError);
+        onTurnFinalized?.call(question, visibleError);
+        _questionFinalizedForCurrentTurn = false;
         _state = LlmState.ready;
         notifyListeners();
         return;
@@ -448,37 +452,46 @@ $_resumeText
           .transform(utf8.decoder)
           .transform(const LineSplitter())) {
         if (!line.startsWith('data: ')) continue;
+
         final payload = line.substring(6).trim();
         if (payload.isEmpty || payload == '[DONE]') continue;
+
         try {
           final j = jsonDecode(payload) as Map<String, dynamic>;
           final cands = j['candidates'] as List?;
           if (cands == null || cands.isEmpty) continue;
-          final parts = (cands[0]['content']?['parts']) as List?;
-          for (final p in parts ?? []) {
+
+          final parts = cands[0]['content']?['parts'] as List?;
+          for (final p in parts ?? const []) {
             final t = (p as Map)['text'] as String?;
             if (t != null && t.isNotEmpty) {
+              if (_lastAnswerDraft == 'Thinking...') {
+                _lastAnswerDraft = '';
+              }
               _lastAnswerDraft += t;
               onAIAnswerDraftUpdate?.call(_lastAnswerDraft);
             }
           }
-        } catch (_) {}
+        } catch (e) {
+          debugPrint('[LLM] SSE parse error: $e');
+        }
       }
 
-      if (_lastAnswerDraft.trim().isNotEmpty) {
-        debugPrint('[LLM] Answer stream completed. Length: ${_lastAnswerDraft.length}');
-        _history.insert(0, {'question': question, 'answer': _lastAnswerDraft.trim()});
+      final finalAnswer = _lastAnswerDraft.trim();
+      if (finalAnswer.isNotEmpty) {
+        _history.insert(0, {'question': question, 'answer': finalAnswer});
         if (_history.length > 20) _history.removeLast();
-        
-        onTurnFinalized?.call(question, _lastAnswerDraft.trim());
+        onTurnFinalized?.call(question, finalAnswer);
+      } else {
+        onTurnFinalized?.call(question, 'No answer was generated.');
       }
-      _lastAnswerDraft = '';
-      _questionFinalizedForCurrentTurn = false;
-      _state = LlmState.ready;
-      notifyListeners();
     } catch (e) {
       debugPrint('[LLM] Answer error: $e');
-      _state = LlmState.ready;
+      onTurnFinalized?.call(question, 'Answer generation failed. Please retry.');
+    } finally {
+      _lastAnswerDraft = '';
+      _questionFinalizedForCurrentTurn = false;
+      _state = _sessionReady ? LlmState.ready : LlmState.unloaded;
       notifyListeners();
     }
   }

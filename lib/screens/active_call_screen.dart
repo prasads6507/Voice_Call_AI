@@ -63,6 +63,7 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
       _llm!.onAIAnswerDraftUpdate = null;
       _llm!.onTurnFinalized = null;
       _llm!.removeListener(_onLlmChange);
+      _llm!.clearSession();
     }
     _sip?.removeListener(_onSipChange);
     super.dispose();
